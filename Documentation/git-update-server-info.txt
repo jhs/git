@@ -8,6 +8,7 @@ git-update-server-info - Update auxiliary info file to help dumb servers
 
 SYNOPSIS
 --------
+[verse]
 'git update-server-info' [--force]
 
 DESCRIPTION
@@ -37,21 +38,6 @@ what they are for:
 * objects/info/packs
 
 * info/refs
-
-
-BUGS
-----
-When you remove an existing ref, the command fails to update
-info/refs file unless `--force` flag is given.
-
-
-Author
-------
-Written by Junio C Hamano <gitster@pobox.com>
-
-Documentation
---------------
-Documentation by Junio C Hamano.
 
 GIT
 ---

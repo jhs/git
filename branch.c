@@ -1,8 +1,10 @@
+#include "git-compat-util.h"
 #include "cache.h"
 #include "branch.h"
 #include "refs.h"
 #include "remote.h"
 #include "commit.h"
+#include "worktree.h"
 
 struct tracking {
 	struct refspec spec;
@@ -32,19 +34,96 @@ static int find_tracked_branch(struct remote *remote, void *priv)
 	return 0;
 }
 
-static int should_setup_rebase(const struct tracking *tracking)
+static int should_setup_rebase(const char *origin)
 {
 	switch (autorebase) {
 	case AUTOREBASE_NEVER:
 		return 0;
 	case AUTOREBASE_LOCAL:
-		return tracking->remote == NULL;
+		return origin == NULL;
 	case AUTOREBASE_REMOTE:
-		return tracking->remote != NULL;
+		return origin != NULL;
 	case AUTOREBASE_ALWAYS:
 		return 1;
 	}
 	return 0;
+}
+
+static const char tracking_advice[] =
+N_("\n"
+"After fixing the error cause you may try to fix up\n"
+"the remote tracking information by invoking\n"
+"\"git branch --set-upstream-to=%s%s%s\".");
+
+int install_branch_config(int flag, const char *local, const char *origin, const char *remote)
+{
+	const char *shortname = NULL;
+	struct strbuf key = STRBUF_INIT;
+	int rebasing = should_setup_rebase(origin);
+
+	if (skip_prefix(remote, "refs/heads/", &shortname)
+	    && !strcmp(local, shortname)
+	    && !origin) {
+		warning(_("Not setting branch %s as its own upstream."),
+			local);
+		return 0;
+	}
+
+	strbuf_addf(&key, "branch.%s.remote", local);
+	if (git_config_set_gently(key.buf, origin ? origin : ".") < 0)
+		goto out_err;
+
+	strbuf_reset(&key);
+	strbuf_addf(&key, "branch.%s.merge", local);
+	if (git_config_set_gently(key.buf, remote) < 0)
+		goto out_err;
+
+	if (rebasing) {
+		strbuf_reset(&key);
+		strbuf_addf(&key, "branch.%s.rebase", local);
+		if (git_config_set_gently(key.buf, "true") < 0)
+			goto out_err;
+	}
+	strbuf_release(&key);
+
+	if (flag & BRANCH_CONFIG_VERBOSE) {
+		if (shortname) {
+			if (origin)
+				printf_ln(rebasing ?
+					  _("Branch %s set up to track remote branch %s from %s by rebasing.") :
+					  _("Branch %s set up to track remote branch %s from %s."),
+					  local, shortname, origin);
+			else
+				printf_ln(rebasing ?
+					  _("Branch %s set up to track local branch %s by rebasing.") :
+					  _("Branch %s set up to track local branch %s."),
+					  local, shortname);
+		} else {
+			if (origin)
+				printf_ln(rebasing ?
+					  _("Branch %s set up to track remote ref %s by rebasing.") :
+					  _("Branch %s set up to track remote ref %s."),
+					  local, remote);
+			else
+				printf_ln(rebasing ?
+					  _("Branch %s set up to track local ref %s by rebasing.") :
+					  _("Branch %s set up to track local ref %s."),
+					  local, remote);
+		}
+	}
+
+	return 0;
+
+out_err:
+	strbuf_release(&key);
+	error(_("Unable to write upstream branch configuration"));
+
+	advise(_(tracking_advice),
+	       origin ? origin : "",
+	       origin ? "/" : "",
+	       shortname ? shortname : remote);
+
+	return -1;
 }
 
 /*
@@ -52,123 +131,193 @@ static int should_setup_rebase(const struct tracking *tracking)
  * to infer the settings for branch.<new_ref>.{remote,merge} from the
  * config.
  */
-static int setup_tracking(const char *new_ref, const char *orig_ref,
-                          enum branch_track track)
+static void setup_tracking(const char *new_ref, const char *orig_ref,
+			   enum branch_track track, int quiet)
 {
-	char key[1024];
 	struct tracking tracking;
-
-	if (strlen(new_ref) > 1024 - 7 - 7 - 1)
-		return error("Tracking not set up: name too long: %s",
-				new_ref);
+	int config_flags = quiet ? 0 : BRANCH_CONFIG_VERBOSE;
 
 	memset(&tracking, 0, sizeof(tracking));
 	tracking.spec.dst = (char *)orig_ref;
 	if (for_each_remote(find_tracked_branch, &tracking))
-		return 1;
+		return;
 
 	if (!tracking.matches)
 		switch (track) {
 		case BRANCH_TRACK_ALWAYS:
 		case BRANCH_TRACK_EXPLICIT:
+		case BRANCH_TRACK_OVERRIDE:
 			break;
 		default:
-			return 1;
+			return;
 		}
 
 	if (tracking.matches > 1)
-		return error("Not tracking: ambiguous information for ref %s",
-				orig_ref);
+		die(_("Not tracking: ambiguous information for ref %s"),
+		    orig_ref);
 
-	sprintf(key, "branch.%s.remote", new_ref);
-	git_config_set(key, tracking.remote ?  tracking.remote : ".");
-	sprintf(key, "branch.%s.merge", new_ref);
-	git_config_set(key, tracking.src ? tracking.src : orig_ref);
-	printf("Branch %s set up to track %s branch %s.\n", new_ref,
-		tracking.remote ? "remote" : "local", orig_ref);
-	if (should_setup_rebase(&tracking)) {
-		sprintf(key, "branch.%s.rebase", new_ref);
-		git_config_set(key, "true");
-		printf("This branch will rebase on pull.\n");
-	}
+	if (install_branch_config(config_flags, new_ref, tracking.remote,
+			      tracking.src ? tracking.src : orig_ref) < 0)
+		exit(-1);
+
 	free(tracking.src);
+}
 
+int read_branch_desc(struct strbuf *buf, const char *branch_name)
+{
+	char *v = NULL;
+	struct strbuf name = STRBUF_INIT;
+	strbuf_addf(&name, "branch.%s.description", branch_name);
+	if (git_config_get_string(name.buf, &v)) {
+		strbuf_release(&name);
+		return -1;
+	}
+	strbuf_addstr(buf, v);
+	free(v);
+	strbuf_release(&name);
 	return 0;
 }
 
+int validate_new_branchname(const char *name, struct strbuf *ref,
+			    int force, int attr_only)
+{
+	if (strbuf_check_branch_ref(ref, name))
+		die(_("'%s' is not a valid branch name."), name);
+
+	if (!ref_exists(ref->buf))
+		return 0;
+	else if (!force && !attr_only)
+		die(_("A branch named '%s' already exists."), ref->buf + strlen("refs/heads/"));
+
+	if (!attr_only) {
+		const char *head;
+		unsigned char sha1[20];
+
+		head = resolve_ref_unsafe("HEAD", 0, sha1, NULL);
+		if (!is_bare_repository() && head && !strcmp(head, ref->buf))
+			die(_("Cannot force update the current branch."));
+	}
+	return 1;
+}
+
+static int check_tracking_branch(struct remote *remote, void *cb_data)
+{
+	char *tracking_branch = cb_data;
+	struct refspec query;
+	memset(&query, 0, sizeof(struct refspec));
+	query.dst = tracking_branch;
+	return !remote_find_tracking(remote, &query);
+}
+
+static int validate_remote_tracking_branch(char *ref)
+{
+	return !for_each_remote(check_tracking_branch, ref);
+}
+
+static const char upstream_not_branch[] =
+N_("Cannot setup tracking information; starting point '%s' is not a branch.");
+static const char upstream_missing[] =
+N_("the requested upstream branch '%s' does not exist");
+static const char upstream_advice[] =
+N_("\n"
+"If you are planning on basing your work on an upstream\n"
+"branch that already exists at the remote, you may need to\n"
+"run \"git fetch\" to retrieve it.\n"
+"\n"
+"If you are planning to push out a new local branch that\n"
+"will track its remote counterpart, you may want to use\n"
+"\"git push -u\" to set the upstream config as you push.");
+
 void create_branch(const char *head,
 		   const char *name, const char *start_name,
-		   int force, int reflog, enum branch_track track)
+		   int force, int reflog, int clobber_head,
+		   int quiet, enum branch_track track)
 {
-	struct ref_lock *lock;
 	struct commit *commit;
 	unsigned char sha1[20];
 	char *real_ref, msg[PATH_MAX + 20];
 	struct strbuf ref = STRBUF_INIT;
 	int forcing = 0;
-	int len;
+	int dont_change_ref = 0;
+	int explicit_tracking = 0;
 
-	len = strlen(name);
-	if (interpret_nth_last_branch(name, &ref) != len) {
-		strbuf_reset(&ref);
-		strbuf_add(&ref, name, len);
-	}
-	strbuf_splice(&ref, 0, 0, "refs/heads/", 11);
+	if (track == BRANCH_TRACK_EXPLICIT || track == BRANCH_TRACK_OVERRIDE)
+		explicit_tracking = 1;
 
-	if (check_ref_format(ref.buf))
-		die("'%s' is not a valid branch name.", name);
-
-	if (resolve_ref(ref.buf, sha1, 1, NULL)) {
+	if (validate_new_branchname(name, &ref, force,
+				    track == BRANCH_TRACK_OVERRIDE ||
+				    clobber_head)) {
 		if (!force)
-			die("A branch named '%s' already exists.", name);
-		else if (!is_bare_repository() && !strcmp(head, name))
-			die("Cannot force update the current branch.");
-		forcing = 1;
+			dont_change_ref = 1;
+		else
+			forcing = 1;
 	}
 
 	real_ref = NULL;
-	if (get_sha1(start_name, sha1))
-		die("Not a valid object name: '%s'.", start_name);
+	if (get_sha1(start_name, sha1)) {
+		if (explicit_tracking) {
+			if (advice_set_upstream_failure) {
+				error(_(upstream_missing), start_name);
+				advise(_(upstream_advice));
+				exit(1);
+			}
+			die(_(upstream_missing), start_name);
+		}
+		die(_("Not a valid object name: '%s'."), start_name);
+	}
 
 	switch (dwim_ref(start_name, strlen(start_name), sha1, &real_ref)) {
 	case 0:
 		/* Not branching from any existing branch */
-		if (track == BRANCH_TRACK_EXPLICIT)
-			die("Cannot setup tracking information; starting point is not a branch.");
+		if (explicit_tracking)
+			die(_(upstream_not_branch), start_name);
 		break;
 	case 1:
-		/* Unique completion -- good, only if it is a real ref */
-		if (track == BRANCH_TRACK_EXPLICIT && !strcmp(real_ref, "HEAD"))
-			die("Cannot setup tracking information; starting point is not a branch.");
+		/* Unique completion -- good, only if it is a real branch */
+		if (!starts_with(real_ref, "refs/heads/") &&
+		    validate_remote_tracking_branch(real_ref)) {
+			if (explicit_tracking)
+				die(_(upstream_not_branch), start_name);
+			else
+				real_ref = NULL;
+		}
 		break;
 	default:
-		die("Ambiguous object name: '%s'.", start_name);
+		die(_("Ambiguous object name: '%s'."), start_name);
 		break;
 	}
 
 	if ((commit = lookup_commit_reference(sha1)) == NULL)
-		die("Not a valid branch point: '%s'.", start_name);
-	hashcpy(sha1, commit->object.sha1);
+		die(_("Not a valid branch point: '%s'."), start_name);
+	hashcpy(sha1, commit->object.oid.hash);
 
-	lock = lock_any_ref_for_update(ref.buf, NULL, 0);
-	if (!lock)
-		die("Failed to lock ref for update: %s.", strerror(errno));
+	if (forcing)
+		snprintf(msg, sizeof msg, "branch: Reset to %s",
+			 start_name);
+	else if (!dont_change_ref)
+		snprintf(msg, sizeof msg, "branch: Created from %s",
+			 start_name);
 
 	if (reflog)
 		log_all_ref_updates = 1;
 
-	if (forcing)
-		snprintf(msg, sizeof msg, "branch: Reset from %s",
-			 start_name);
-	else
-		snprintf(msg, sizeof msg, "branch: Created from %s",
-			 start_name);
+	if (!dont_change_ref) {
+		struct ref_transaction *transaction;
+		struct strbuf err = STRBUF_INIT;
+
+		transaction = ref_transaction_begin(&err);
+		if (!transaction ||
+		    ref_transaction_update(transaction, ref.buf,
+					   sha1, forcing ? NULL : null_sha1,
+					   0, msg, &err) ||
+		    ref_transaction_commit(transaction, &err))
+			die("%s", err.buf);
+		ref_transaction_free(transaction);
+		strbuf_release(&err);
+	}
 
 	if (real_ref && track)
-		setup_tracking(name, real_ref, track);
-
-	if (write_ref_sha1(lock, sha1, msg) < 0)
-		die("Failed to write ref: %s.", strerror(errno));
+		setup_tracking(ref.buf + 11, real_ref, track, quiet);
 
 	strbuf_release(&ref);
 	free(real_ref);
@@ -176,9 +325,22 @@ void create_branch(const char *head,
 
 void remove_branch_state(void)
 {
-	unlink(git_path("MERGE_HEAD"));
-	unlink(git_path("MERGE_RR"));
-	unlink(git_path("MERGE_MSG"));
-	unlink(git_path("MERGE_MODE"));
-	unlink(git_path("SQUASH_MSG"));
+	unlink(git_path_cherry_pick_head());
+	unlink(git_path_revert_head());
+	unlink(git_path_merge_head());
+	unlink(git_path_merge_rr());
+	unlink(git_path_merge_msg());
+	unlink(git_path_merge_mode());
+	unlink(git_path_squash_msg());
+}
+
+void die_if_checked_out(const char *branch)
+{
+	char *existing;
+
+	existing = find_shared_symref("HEAD", branch);
+	if (existing) {
+		skip_prefix(branch, "refs/heads/", &branch);
+		die(_("'%s' is already checked out at '%s'"), branch, existing);
+	}
 }

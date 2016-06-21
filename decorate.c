@@ -8,15 +8,14 @@
 
 static unsigned int hash_obj(const struct object *obj, unsigned int n)
 {
-	unsigned int hash = *(unsigned int *)obj->sha1;
-	return hash % n;
+	return sha1hash(obj->oid.hash) % n;
 }
 
 static void *insert_decoration(struct decoration *n, const struct object *base, void *decoration)
 {
 	int size = n->size;
 	struct object_decoration *hash = n->hash;
-	int j = hash_obj(base, size);
+	unsigned int j = hash_obj(base, size);
 
 	while (hash[j].base) {
 		if (hash[j].base == base) {
@@ -47,7 +46,7 @@ static void grow_decoration(struct decoration *n)
 		const struct object *base = old_hash[i].base;
 		void *decoration = old_hash[i].decoration;
 
-		if (!base)
+		if (!decoration)
 			continue;
 		insert_decoration(n, base, decoration);
 	}
@@ -68,7 +67,7 @@ void *add_decoration(struct decoration *n, const struct object *obj,
 /* Lookup a decoration pointer */
 void *lookup_decoration(struct decoration *n, const struct object *obj)
 {
-	int j;
+	unsigned int j;
 
 	/* nothing to lookup */
 	if (!n->size)

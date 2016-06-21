@@ -8,6 +8,7 @@ git-diff-files - Compares files in the working tree and the index
 
 SYNOPSIS
 --------
+[verse]
 'git diff-files' [-q] [-0|-1|-2|-3|-c|--cc] [<common diff options>] [<path>...]
 
 DESCRIPTION
@@ -15,7 +16,7 @@ DESCRIPTION
 Compares the files in the working tree and the index.  When paths
 are specified, compares only those named paths.  Otherwise all
 entries in the index are compared.  The output format is the
-same as for 'git-diff-index' and 'git-diff-tree'.
+same as for 'git diff-index' and 'git diff-tree'.
 
 OPTIONS
 -------
@@ -43,18 +44,8 @@ omit diff output for unmerged entries and just show "Unmerged".
 -q::
 	Remain silent even on nonexistent files
 
-Output format
--------------
+
 include::diff-format.txt[]
-
-
-Author
-------
-Written by Linus Torvalds <torvalds@osdl.org>
-
-Documentation
---------------
-Documentation by David Greaves, Junio C Hamano and the git-list <git@vger.kernel.org>.
 
 GIT
 ---

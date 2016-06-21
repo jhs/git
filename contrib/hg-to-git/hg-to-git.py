@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#!/usr/bin/env python
 
 """ hg-to-git.py - A Mercurial to GIT converter
 
@@ -20,8 +20,13 @@
 """
 
 import os, os.path, sys
-import tempfile, popen2, pickle, getopt
+import tempfile, pickle, getopt
 import re
+
+if sys.hexversion < 0x02030000:
+   # The behavior of the pickle module changed significantly in 2.3
+   sys.stderr.write("hg-to-git.py: requires Python 2.3 or later.\n")
+   sys.exit(1)
 
 # Maps hg version -> git version
 hgvers = {}
@@ -59,14 +64,14 @@ def getgitenv(user, date):
     elems = re.compile('(.*?)\s+<(.*)>').match(user)
     if elems:
         env += 'export GIT_AUTHOR_NAME="%s" ;' % elems.group(1)
-        env += 'export GIT_COMMITER_NAME="%s" ;' % elems.group(1)
+        env += 'export GIT_COMMITTER_NAME="%s" ;' % elems.group(1)
         env += 'export GIT_AUTHOR_EMAIL="%s" ;' % elems.group(2)
-        env += 'export GIT_COMMITER_EMAIL="%s" ;' % elems.group(2)
+        env += 'export GIT_COMMITTER_EMAIL="%s" ;' % elems.group(2)
     else:
         env += 'export GIT_AUTHOR_NAME="%s" ;' % user
-        env += 'export GIT_COMMITER_NAME="%s" ;' % user
+        env += 'export GIT_COMMITTER_NAME="%s" ;' % user
         env += 'export GIT_AUTHOR_EMAIL= ;'
-        env += 'export GIT_COMMITER_EMAIL= ;'
+        env += 'export GIT_COMMITTER_EMAIL= ;'
 
     env += 'export GIT_AUTHOR_DATE="%s" ;' % date
     env += 'export GIT_COMMITTER_DATE="%s" ;' % date
@@ -220,7 +225,7 @@ for cset in range(int(tip) + 1):
     os.system('git ls-files -x .hg --deleted | git update-index --remove --stdin')
 
     # commit
-    os.system(getgitenv(user, date) + 'git commit --allow-empty -a -F %s' % filecomment)
+    os.system(getgitenv(user, date) + 'git commit --allow-empty --allow-empty-message -a -F %s' % filecomment)
     os.unlink(filecomment)
 
     # tag

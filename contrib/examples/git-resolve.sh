@@ -48,7 +48,7 @@ case "$common" in
 "$head")
 	echo "Updating $(git rev-parse --short $head)..$(git rev-parse --short $merge)"
 	git read-tree -u -m $head $merge || exit 1
-	git update-ref -m "resolve $merge_name: Fast forward" \
+	git update-ref -m "resolve $merge_name: Fast-forward" \
 		HEAD "$merge" "$head"
 	git diff-tree -p $head $merge | git apply --stat
 	dropheads
@@ -75,8 +75,8 @@ case "$common" in
 		GIT_INDEX_FILE=$G git read-tree -m $c $head $merge \
 			2>/dev/null || continue
 		# Count the paths that are unmerged.
-		cnt=`GIT_INDEX_FILE=$G git ls-files --unmerged | wc -l`
-		if test $best_cnt -le 0 -o $cnt -le $best_cnt
+		cnt=$(GIT_INDEX_FILE=$G git ls-files --unmerged | wc -l)
+		if test $best_cnt -le 0 || test $cnt -le $best_cnt
 		then
 			best=$c
 			best_cnt=$cnt

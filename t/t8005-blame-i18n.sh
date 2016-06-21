@@ -4,7 +4,7 @@ test_description='git blame encoding conversion'
 . ./test-lib.sh
 
 . "$TEST_DIRECTORY"/t8005/utf8.txt
-. "$TEST_DIRECTORY"/t8005/cp1251.txt
+. "$TEST_DIRECTORY"/t8005/euc-japan.txt
 . "$TEST_DIRECTORY"/t8005/sjis.txt
 
 test_expect_success 'setup the repository' '
@@ -13,14 +13,14 @@ test_expect_success 'setup the repository' '
 	git add file &&
 	git commit --author "$UTF8_NAME <utf8@localhost>" -m "$UTF8_MSG" &&
 
-	echo "CP1251 LINE" >> file &&
+	echo "EUC-JAPAN LINE" >> file &&
 	git add file &&
-	git config i18n.commitencoding cp1251 &&
-	git commit --author "$CP1251_NAME <cp1251@localhost>" -m "$CP1251_MSG" &&
+	git config i18n.commitencoding eucJP &&
+	git commit --author "$EUC_JAPAN_NAME <euc-japan@localhost>" -m "$EUC_JAPAN_MSG" &&
 
 	echo "SJIS LINE" >> file &&
 	git add file &&
-	git config i18n.commitencoding shift-jis &&
+	git config i18n.commitencoding SJIS &&
 	git commit --author "$SJIS_NAME <sjis@localhost>" -m "$SJIS_MSG"
 '
 
@@ -33,28 +33,32 @@ author $SJIS_NAME
 summary $SJIS_MSG
 EOF
 
-test_expect_success \
+filter_author_summary () {
+	sed -n -e '/^author /p' -e '/^summary /p' "$@"
+}
+
+test_expect_success !MINGW \
 	'blame respects i18n.commitencoding' '
-	git blame --incremental file | \
-		grep "^\(author\|summary\) " > actual &&
-	test_cmp actual expected
+	git blame --incremental file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
 cat >expected <<EOF
-author $CP1251_NAME
-summary $CP1251_MSG
-author $CP1251_NAME
-summary $CP1251_MSG
-author $CP1251_NAME
-summary $CP1251_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
 EOF
 
-test_expect_success \
+test_expect_success !MINGW \
 	'blame respects i18n.logoutputencoding' '
-	git config i18n.logoutputencoding cp1251 &&
-	git blame --incremental file | \
-		grep "^\(author\|summary\) " > actual &&
-	test_cmp actual expected
+	git config i18n.logoutputencoding eucJP &&
+	git blame --incremental file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
 cat >expected <<EOF
@@ -66,27 +70,27 @@ author $UTF8_NAME
 summary $UTF8_MSG
 EOF
 
-test_expect_success \
-	'blame respects --encoding=utf-8' '
-	git blame --incremental --encoding=utf-8 file | \
-		grep "^\(author\|summary\) " > actual &&
-	test_cmp actual expected
+test_expect_success !MINGW \
+	'blame respects --encoding=UTF-8' '
+	git blame --incremental --encoding=UTF-8 file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
 cat >expected <<EOF
 author $SJIS_NAME
 summary $SJIS_MSG
-author $CP1251_NAME
-summary $CP1251_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
 author $UTF8_NAME
 summary $UTF8_MSG
 EOF
 
-test_expect_success \
+test_expect_success !MINGW \
 	'blame respects --encoding=none' '
-	git blame --incremental --encoding=none file | \
-		grep "^\(author\|summary\) " > actual &&
-	test_cmp actual expected
+	git blame --incremental --encoding=none file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
 test_done

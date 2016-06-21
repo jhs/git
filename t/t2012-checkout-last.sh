@@ -1,6 +1,6 @@
 #!/bin/sh
 
-test_description='checkout can switch to last branch'
+test_description='checkout can switch to last branch and merge base'
 
 . ./test-lib.sh
 
@@ -89,6 +89,65 @@ test_expect_success 'switch to twelfth from the last' '
 	more_switches &&
 	git checkout @{-12} &&
 	test "z$(git symbolic-ref HEAD)" = "zrefs/heads/branch13"
+'
+
+test_expect_success 'merge base test setup' '
+	git checkout -b another other &&
+	echo "hello again" >>world &&
+	git add world &&
+	git commit -m third
+'
+
+test_expect_success 'another...master' '
+	git checkout another &&
+	git checkout another...master &&
+	test "z$(git rev-parse --verify HEAD)" = "z$(git rev-parse --verify master^)"
+'
+
+test_expect_success '...master' '
+	git checkout another &&
+	git checkout ...master &&
+	test "z$(git rev-parse --verify HEAD)" = "z$(git rev-parse --verify master^)"
+'
+
+test_expect_success 'master...' '
+	git checkout another &&
+	git checkout master... &&
+	test "z$(git rev-parse --verify HEAD)" = "z$(git rev-parse --verify master^)"
+'
+
+test_expect_success '"checkout -" works after a rebase A' '
+	git checkout master &&
+	git checkout other &&
+	git rebase master &&
+	git checkout - &&
+	test "z$(git symbolic-ref HEAD)" = "zrefs/heads/master"
+'
+
+test_expect_success '"checkout -" works after a rebase A B' '
+	git branch moodle master~1 &&
+	git checkout master &&
+	git checkout other &&
+	git rebase master moodle &&
+	git checkout - &&
+	test "z$(git symbolic-ref HEAD)" = "zrefs/heads/master"
+'
+
+test_expect_success '"checkout -" works after a rebase -i A' '
+	git checkout master &&
+	git checkout other &&
+	git rebase -i master &&
+	git checkout - &&
+	test "z$(git symbolic-ref HEAD)" = "zrefs/heads/master"
+'
+
+test_expect_success '"checkout -" works after a rebase -i A B' '
+	git branch foodle master~1 &&
+	git checkout master &&
+	git checkout other &&
+	git rebase master foodle &&
+	git checkout - &&
+	test "z$(git symbolic-ref HEAD)" = "zrefs/heads/master"
 '
 
 test_done

@@ -1,19 +1,32 @@
 #!/usr/bin/perl
 use lib (split(/:/, $ENV{GITPERLLIB}));
 
-use 5.006002;
+use 5.008;
 use warnings;
 use strict;
 
 use Test::More qw(no_plan);
 
+BEGIN {
+	# t9700-perl-git.sh kicks off our testing, so we have to go from
+	# there.
+	Test::More->builder->current_test(1);
+	Test::More->builder->no_ending(1);
+}
+
 use Cwd;
 use File::Basename;
+
+sub adjust_dirsep {
+	my $path = shift;
+	$path =~ s{\\}{/}g;
+	return $path;
+}
 
 BEGIN { use_ok('Git') }
 
 # set up
-our $abs_repo_dir = Cwd->cwd;
+our $abs_repo_dir = cwd();
 ok(our $r = Git->repository(Directory => "."), "open repository");
 
 # config
@@ -26,6 +39,10 @@ is($r->config_int("test.int"), 2048, "config_int: integer");
 is($r->config_int("test.nonexistent"), undef, "config_int: nonexistent");
 ok($r->config_bool("test.booltrue"), "config_bool: true");
 ok(!$r->config_bool("test.boolfalse"), "config_bool: false");
+is(adjust_dirsep($r->config_path("test.path")), $r->config("test.pathexpanded"),
+   "config_path: ~/foo expansion");
+is_deeply([$r->config_path("test.pathmulti")], ["foo", "bar"],
+   "config_path: multiple values");
 our $ansi_green = "\x1b[32m";
 is($r->get_color("color.test.slot1", "red"), $ansi_green, "get_color");
 # Cannot test $r->get_colorbool("color.foo")) because we do not
@@ -34,9 +51,9 @@ is($r->get_color("color.test.slot1", "red"), $ansi_green, "get_color");
 # Failure cases for config:
 # Save and restore STDERR; we will probably extract this into a
 # "dies_ok" method and possibly move the STDERR handling to Git.pm.
-open our $tmpstderr, ">&STDERR" or die "cannot save STDERR"; close STDERR;
-eval { $r->config("test.dupstring") };
-ok($@, "config: duplicate entry in scalar context fails");
+open our $tmpstderr, ">&STDERR" or die "cannot save STDERR";
+open STDERR, ">", "/dev/null" or die "cannot redirect STDERR to /dev/null";
+is($r->config("test.dupstring"), "value2", "config: multivar");
 eval { $r->config_bool("test.boolother") };
 ok($@, "config_bool: non-boolean values fail");
 open STDERR, ">&", $tmpstderr or die "cannot restore STDERR";
@@ -86,15 +103,37 @@ close TEMPFILE;
 unlink $tmpfile;
 
 # paths
-is($r->repo_path, "./.git", "repo_path");
+is($r->repo_path, $abs_repo_dir . "/.git", "repo_path");
 is($r->wc_path, $abs_repo_dir . "/", "wc_path");
 is($r->wc_subdir, "", "wc_subdir initial");
 $r->wc_chdir("directory1");
 is($r->wc_subdir, "directory1", "wc_subdir after wc_chdir");
-TODO: {
-	local $TODO = "commands do not work after wc_chdir";
-	# Failure output is active even in non-verbose mode and thus
-	# annoying.  Hence we skip these tests as long as they fail.
-	todo_skip 'config after wc_chdir', 1;
-	is($r->config("color.string"), "value", "config after wc_chdir");
-}
+is($r->config("test.string"), "value", "config after wc_chdir");
+
+# Object generation in sub directory
+chdir("directory2");
+my $r2 = Git->repository();
+is($r2->repo_path, $abs_repo_dir . "/.git", "repo_path (2)");
+is($r2->wc_path, $abs_repo_dir . "/", "wc_path (2)");
+is($r2->wc_subdir, "directory2/", "wc_subdir initial (2)");
+
+# commands in sub directory
+my $last_commit = $r2->command_oneline(qw(rev-parse --verify HEAD));
+like($last_commit, qr/^[0-9a-fA-F]{40}$/, 'rev-parse returned hash');
+my $dir_commit = $r2->command_oneline('log', '-n1', '--pretty=format:%H', '.');
+isnt($last_commit, $dir_commit, 'log . does not show last commit');
+
+# commands outside working tree
+chdir($abs_repo_dir . '/..');
+my $r3 = Git->repository(Directory => $abs_repo_dir);
+my $tmpfile3 = "$abs_repo_dir/file3.tmp";
+open TEMPFILE3, "+>$tmpfile3" or die "Can't open $tmpfile3: $!";
+is($r3->cat_blob($file1hash, \*TEMPFILE3), 15, "cat_blob(outside): size");
+close TEMPFILE3;
+unlink $tmpfile3;
+chdir($abs_repo_dir);
+
+printf "1..%d\n", Test::More->builder->current_test;
+
+my $is_passing = eval { Test::More->is_passing };
+exit($is_passing ? 0 : 1) unless $@ =~ /Can't locate object method/;

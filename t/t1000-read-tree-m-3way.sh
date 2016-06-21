@@ -72,6 +72,7 @@ In addition:
 
 '
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-read-tree.sh
 . "$TEST_DIRECTORY"/lib-read-tree-m-3way.sh
 
 ################################################################
@@ -126,9 +127,6 @@ cat >expected <<\EOF
 100644 X 0	Z/NN
 EOF
 
-_x40='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
-_x40="$_x40$_x40$_x40$_x40$_x40$_x40$_x40$_x40"
-
 check_result () {
     git ls-files --stage | sed -e 's/ '"$_x40"' / X /' >current &&
     test_cmp expected current
@@ -140,7 +138,7 @@ test_expect_success \
     '3-way merge with git read-tree -m, empty cache' \
     "rm -fr [NDMALTS][NDMALTSF] Z &&
      rm .git/index &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 # This starts out with the first head, which is the normal
@@ -149,9 +147,9 @@ test_expect_success \
     '3-way merge with git read-tree -m, match H' \
     "rm -fr [NDMALTS][NDMALTSF] Z &&
      rm .git/index &&
-     git read-tree $tree_A &&
+     read_tree_must_succeed $tree_A &&
      git checkout-index -f -u -a &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 : <<\END_OF_CASE_TABLE
@@ -214,7 +212,7 @@ test_expect_success '1 - must not have an entry not in A.' "
      rm -f .git/index XX &&
      echo XX >XX &&
      git update-index --add XX &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -222,7 +220,7 @@ test_expect_success \
     "rm -f .git/index NA &&
      cp .orig-B/NA NA &&
      git update-index --add NA &&
-     git read-tree -m $tree_O $tree_A $tree_B"
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B"
 
 test_expect_success \
     '2 - matching B alone is OK in !O && !A && B case.' \
@@ -230,14 +228,14 @@ test_expect_success \
      cp .orig-B/NA NA &&
      git update-index --add NA &&
      echo extra >>NA &&
-     git read-tree -m $tree_O $tree_A $tree_B"
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B"
 
 test_expect_success \
     '3 - must match A in !O && A && !B case.' \
     "rm -f .git/index AN &&
      cp .orig-A/AN AN &&
      git update-index --add AN &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -246,7 +244,7 @@ test_expect_success \
      cp .orig-A/AN AN &&
      git update-index --add AN &&
      echo extra >>AN &&
-     git read-tree -m $tree_O $tree_A $tree_B"
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B"
 
 test_expect_success \
     '3 (fail) - must match A in !O && A && !B case.' "
@@ -254,7 +252,7 @@ test_expect_success \
      cp .orig-A/AN AN &&
      echo extra >>AN &&
      git update-index --add AN &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -262,7 +260,7 @@ test_expect_success \
     "rm -f .git/index AA &&
      cp .orig-A/AA AA &&
      git update-index --add AA &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -271,7 +269,7 @@ test_expect_success \
      cp .orig-A/AA AA &&
      git update-index --add AA &&
      echo extra >>AA &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -280,7 +278,7 @@ test_expect_success \
      cp .orig-A/AA AA &&
      echo extra >>AA &&
      git update-index --add AA &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -288,7 +286,7 @@ test_expect_success \
     "rm -f .git/index LL &&
      cp .orig-A/LL LL &&
      git update-index --add LL &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -297,7 +295,7 @@ test_expect_success \
      cp .orig-A/LL LL &&
      git update-index --add LL &&
      echo extra >>LL &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -306,15 +304,15 @@ test_expect_success \
      cp .orig-A/LL LL &&
      echo extra >>LL &&
      git update-index --add LL &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
     '6 - must not exist in O && !A && !B case' "
      rm -f .git/index DD &&
-     echo DD >DD
+     echo DD >DD &&
      git update-index --add DD &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -322,7 +320,7 @@ test_expect_success \
      rm -f .git/index DM &&
      cp .orig-B/DM DM &&
      git update-index --add DM &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -330,7 +328,7 @@ test_expect_success \
      rm -f .git/index DN &&
      cp .orig-B/DN DN &&
      git update-index --add DN &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -338,7 +336,7 @@ test_expect_success \
     "rm -f .git/index MD &&
      cp .orig-A/MD MD &&
      git update-index --add MD &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -347,7 +345,7 @@ test_expect_success \
      cp .orig-A/MD MD &&
      git update-index --add MD &&
      echo extra >>MD &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -356,7 +354,7 @@ test_expect_success \
      cp .orig-A/MD MD &&
      echo extra >>MD &&
      git update-index --add MD &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -364,7 +362,7 @@ test_expect_success \
     "rm -f .git/index ND &&
      cp .orig-A/ND ND &&
      git update-index --add ND &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -373,7 +371,7 @@ test_expect_success \
      cp .orig-A/ND ND &&
      git update-index --add ND &&
      echo extra >>ND &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -382,7 +380,7 @@ test_expect_success \
      cp .orig-A/ND ND &&
      echo extra >>ND &&
      git update-index --add ND &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -390,7 +388,7 @@ test_expect_success \
     "rm -f .git/index MM &&
      cp .orig-A/MM MM &&
      git update-index --add MM &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -399,7 +397,7 @@ test_expect_success \
      cp .orig-A/MM MM &&
      git update-index --add MM &&
      echo extra >>MM &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -408,7 +406,7 @@ test_expect_success \
      cp .orig-A/MM MM &&
      echo extra >>MM &&
      git update-index --add MM &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -416,7 +414,7 @@ test_expect_success \
     "rm -f .git/index SS &&
      cp .orig-A/SS SS &&
      git update-index --add SS &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -425,7 +423,7 @@ test_expect_success \
      cp .orig-A/SS SS &&
      git update-index --add SS &&
      echo extra >>SS &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -434,7 +432,7 @@ test_expect_success \
      cp .orig-A/SS SS &&
      echo extra >>SS &&
      git update-index --add SS &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -442,7 +440,7 @@ test_expect_success \
     "rm -f .git/index MN &&
      cp .orig-A/MN MN &&
      git update-index --add MN &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -451,7 +449,7 @@ test_expect_success \
      cp .orig-A/MN MN &&
      git update-index --add MN &&
      echo extra >>MN &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -459,7 +457,7 @@ test_expect_success \
     "rm -f .git/index NM &&
      cp .orig-A/NM NM &&
      git update-index --add NM &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -468,7 +466,7 @@ test_expect_success \
      cp .orig-B/NM NM &&
      git update-index --add NM &&
      echo extra >>NM &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -477,7 +475,7 @@ test_expect_success \
      cp .orig-A/NM NM &&
      git update-index --add NM &&
      echo extra >>NM &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -486,7 +484,7 @@ test_expect_success \
      cp .orig-A/NM NM &&
      echo extra >>NM &&
      git update-index --add NM &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 test_expect_success \
@@ -494,7 +492,7 @@ test_expect_success \
     "rm -f .git/index NN &&
      cp .orig-A/NN NN &&
      git update-index --add NN &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -503,7 +501,7 @@ test_expect_success \
      cp .orig-A/NN NN &&
      git update-index --add NN &&
      echo extra >>NN &&
-     git read-tree -m $tree_O $tree_A $tree_B &&
+     read_tree_must_succeed -m $tree_O $tree_A $tree_B &&
      check_result"
 
 test_expect_success \
@@ -512,7 +510,7 @@ test_expect_success \
      cp .orig-A/NN NN &&
      echo extra >>NN &&
      git update-index --add NN &&
-     test_must_fail git read-tree -m $tree_O $tree_A $tree_B
+     read_tree_must_fail -m $tree_O $tree_A $tree_B
 "
 
 # #16
@@ -521,11 +519,11 @@ test_expect_success \
     'rm -f .git/index F16 &&
     echo F16 >F16 &&
     git update-index --add F16 &&
-    tree0=`git write-tree` &&
+    tree0=$(git write-tree) &&
     echo E16 >F16 &&
     git update-index F16 &&
-    tree1=`git write-tree` &&
-    git read-tree -m $tree0 $tree1 $tree1 $tree0 &&
+    tree1=$(git write-tree) &&
+    read_tree_must_succeed -m $tree0 $tree1 $tree1 $tree0 &&
     git ls-files --stage'
 
 test_done

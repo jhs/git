@@ -67,7 +67,7 @@ do
 		keep='-k -k'
 		;;
 	--depth=*)
-		shallow_depth="--depth=`expr "z$1" : 'z-[^=]*=\(.*\)'`"
+		shallow_depth="--depth=$(expr "z$1" : 'z-[^=]*=\(.*\)')"
 		;;
 	--depth)
 		shift
@@ -127,10 +127,12 @@ then
 	orig_head=$(git rev-parse --verify HEAD 2>/dev/null)
 fi
 
-# Allow --notags from remote.$1.tagopt
+# Allow --tags/--notags from remote.$1.tagopt
 case "$tags$no_tags" in
 '')
 	case "$(git config --get "remote.$1.tagopt")" in
+	--tags)
+		tags=t ;;
 	--no-tags)
 		no_tags=t ;;
 	esac
@@ -144,13 +146,13 @@ esac
 reflist=$(get_remote_refs_for_fetch "$@")
 if test "$tags"
 then
-	taglist=`IFS='	' &&
+	taglist=$(IFS='	' &&
 		  echo "$ls_remote_result" |
 		  git show-ref --exclude-existing=refs/tags/ |
 	          while read sha1 name
 		  do
 			echo ".${name}:${name}"
-		  done` || exit
+		  done) || exit
 	if test "$#" -gt 1
 	then
 		# remote URL plus explicit refspecs; we need to merge them.
@@ -260,12 +262,12 @@ fetch_per_ref () {
       http://* | https://* | ftp://*)
 	  test -n "$shallow_depth" &&
 		die "shallow clone with http not supported"
-	  proto=`expr "$remote" : '\([^:]*\):'`
+	  proto=$(expr "$remote" : '\([^:]*\):')
 	  if [ -n "$GIT_SSL_NO_VERIFY" ]; then
 	      curl_extra_args="-k"
 	  fi
 	  if [ -n "$GIT_CURL_FTP_NO_EPSV" -o \
-		"`git config --bool http.noEPSV`" = true ]; then
+		"$(git config --bool http.noEPSV)" = true ]; then
 	      noepsv_opt="--disable-epsv"
 	  fi
 

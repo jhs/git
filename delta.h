@@ -9,7 +9,7 @@ struct delta_index;
  *
  * This returns a pointer to a struct delta_index that should be passed to
  * subsequent create_delta() calls, or to free_delta_index().  A NULL pointer
- * is returned on failure.  The given buffer must not be freed nor altered
+ * is returned on failure.  The given buffer must not be freed or altered
  * before free_delta_index() is called.  The returned pointer must be freed
  * using free_delta_index().
  */
@@ -90,12 +90,11 @@ static inline unsigned long get_delta_hdr_size(const unsigned char **datap,
 					       const unsigned char *top)
 {
 	const unsigned char *data = *datap;
-	unsigned char cmd;
-	unsigned long size = 0;
+	unsigned long cmd, size = 0;
 	int i = 0;
 	do {
 		cmd = *data++;
-		size |= (cmd & ~0x80) << i;
+		size |= (cmd & 0x7f) << i;
 		i += 7;
 	} while (cmd & 0x80 && data < top);
 	*datap = data;

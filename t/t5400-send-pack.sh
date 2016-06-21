@@ -32,7 +32,7 @@ test_expect_success setup '
 	done &&
 	git update-ref HEAD "$commit" &&
 	git clone ./. victim &&
-	( cd victim && git log ) &&
+	( cd victim && git config receive.denyCurrentBranch warn && git log ) &&
 	git update-ref HEAD "$zero" &&
 	parent=$zero &&
 	i=0 &&
@@ -76,8 +76,7 @@ test_expect_success 'refuse pushing rewound head without --force' '
 	test "$victim_head" = "$pushed_head"
 '
 
-test_expect_success \
-        'push can be used to delete a ref' '
+test_expect_success 'push can be used to delete a ref' '
 	( cd victim && git branch extra master ) &&
 	git send-pack ./victim :extra master &&
 	( cd victim &&
@@ -94,6 +93,29 @@ test_expect_success 'refuse deleting push with denyDeletes' '
 	test_must_fail git send-pack ./victim :extra master
 '
 
+test_expect_success 'cannot override denyDeletes with git -c send-pack' '
+	(
+		cd victim &&
+		test_might_fail git branch -D extra &&
+		git config receive.denyDeletes true &&
+		git branch extra master
+	) &&
+	test_must_fail git -c receive.denyDeletes=false \
+					send-pack ./victim :extra master
+'
+
+test_expect_success 'override denyDeletes with git -c receive-pack' '
+	(
+		cd victim &&
+		test_might_fail git branch -D extra &&
+		git config receive.denyDeletes true &&
+		git branch extra master
+	) &&
+	git send-pack \
+		--receive-pack="git -c receive.denyDeletes=false receive-pack" \
+		./victim :extra master
+'
+
 test_expect_success 'denyNonFastforwards trumps --force' '
 	(
 	    cd victim &&
@@ -106,7 +128,7 @@ test_expect_success 'denyNonFastforwards trumps --force' '
 	test "$victim_orig" = "$victim_head"
 '
 
-test_expect_success 'push --all excludes remote tracking hierarchy' '
+test_expect_success 'push --all excludes remote-tracking hierarchy' '
 	mkdir parent &&
 	(
 	    cd parent &&
@@ -122,6 +144,41 @@ test_expect_success 'push --all excludes remote tracking hierarchy' '
 	)
 '
 
+test_expect_success 'receive-pack runs auto-gc in remote repo' '
+	rm -rf parent child &&
+	git init parent &&
+	(
+	    # Setup a repo with 2 packs
+	    cd parent &&
+	    echo "Some text" >file.txt &&
+	    git add . &&
+	    git commit -m "Initial commit" &&
+	    git repack -adl &&
+	    echo "Some more text" >>file.txt &&
+	    git commit -a -m "Second commit" &&
+	    git repack
+	) &&
+	cp -R parent child &&
+	(
+	    # Set the child to auto-pack if more than one pack exists
+	    cd child &&
+	    git config gc.autopacklimit 1 &&
+	    git config gc.autodetach false &&
+	    git branch test_auto_gc &&
+	    # And create a file that follows the temporary object naming
+	    # convention for the auto-gc to remove
+	    : >.git/objects/tmp_test_object &&
+	    test-chmtime =-1209601 .git/objects/tmp_test_object
+	) &&
+	(
+	    cd parent &&
+	    echo "Even more text" >>file.txt &&
+	    git commit -a -m "Third commit" &&
+	    git send-pack ../child HEAD:refs/heads/test_auto_gc
+	) &&
+	test ! -e child/.git/objects/tmp_test_object
+'
+
 rewound_push_setup() {
 	rm -rf parent child &&
 	mkdir parent &&
@@ -129,25 +186,13 @@ rewound_push_setup() {
 	    cd parent &&
 	    git init &&
 	    echo one >file && git add file && git commit -m one &&
+	    git config receive.denyCurrentBranch warn &&
 	    echo two >file && git commit -a -m two
 	) &&
 	git clone parent child &&
 	(
 	    cd child && git reset --hard HEAD^
 	)
-}
-
-rewound_push_succeeded() {
-	cmp ../parent/.git/refs/heads/master .git/refs/heads/master
-}
-
-rewound_push_failed() {
-	if rewound_push_succeeded
-	then
-		false
-	else
-		true
-	fi
 }
 
 test_expect_success 'pushing explicit refspecs respects forcing' '
@@ -166,7 +211,7 @@ test_expect_success 'pushing explicit refspecs respects forcing' '
 	        +refs/heads/master:refs/heads/master
 	) &&
 	parent_head=$(cd parent && git rev-parse --verify master) &&
-	child_head=$(cd parent && git rev-parse --verify master) &&
+	child_head=$(cd child && git rev-parse --verify master) &&
 	test "$parent_head" = "$child_head"
 '
 
@@ -186,20 +231,15 @@ test_expect_success 'pushing wildcard refspecs respects forcing' '
 	        "+refs/heads/*:refs/heads/*"
 	) &&
 	parent_head=$(cd parent && git rev-parse --verify master) &&
-	child_head=$(cd parent && git rev-parse --verify master) &&
+	child_head=$(cd child && git rev-parse --verify master) &&
 	test "$parent_head" = "$child_head"
 '
 
-test_expect_success 'warn pushing to delete current branch' '
+test_expect_success 'deny pushing to delete current branch' '
 	rewound_push_setup &&
 	(
 	    cd child &&
-	    git send-pack ../parent :refs/heads/master 2>errs
-	) &&
-	grep "warning: to refuse deleting" child/errs &&
-	(
-		cd parent &&
-		test_must_fail git rev-parse --verify master
+	    test_must_fail git send-pack ../parent :refs/heads/master 2>errs
 	)
 '
 

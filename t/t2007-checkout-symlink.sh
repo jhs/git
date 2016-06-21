@@ -17,7 +17,7 @@ test_expect_success setup '
 	git branch side &&
 
 	echo goodbye >nitfol &&
-	git add nitfol
+	git add nitfol &&
 	test_tick &&
 	git commit -m "master adds file nitfol" &&
 
@@ -25,8 +25,8 @@ test_expect_success setup '
 
 	git rm --cached frotz/filfre &&
 	mv frotz xyzzy &&
-	ln -s xyzzy frotz &&
-	git add xyzzy/filfre frotz &&
+	test_ln_s_add xyzzy frotz &&
+	git add xyzzy/filfre &&
 	test_tick &&
 	git commit -m "side moves frotz/ to xyzzy/ and adds frotz->xyzzy/"
 
@@ -38,8 +38,10 @@ test_expect_success 'switch from symlink to dir' '
 
 '
 
-rm -fr frotz xyzzy nitfol &&
-git checkout -f master || exit
+test_expect_success 'Remove temporary directories & switch to master' '
+	rm -fr frotz xyzzy nitfol &&
+	git checkout -f master
+'
 
 test_expect_success 'switch from dir to symlink' '
 

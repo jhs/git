@@ -27,7 +27,7 @@
  *
  * It does so by calculating the costs of the path ending in characters
  * i (in string1) and j (in string2), respectively, given that the last
- * operation is a substition, a swap, a deletion, or an insertion.
+ * operation is a substitution, a swap, a deletion, or an insertion.
  *
  * This implementation allows the costs to be weighted:
  *
@@ -42,10 +42,12 @@ int levenshtein(const char *string1, const char *string2,
 		int w, int s, int a, int d)
 {
 	int len1 = strlen(string1), len2 = strlen(string2);
-	int *row0 = xmalloc(sizeof(int) * (len2 + 1));
-	int *row1 = xmalloc(sizeof(int) * (len2 + 1));
-	int *row2 = xmalloc(sizeof(int) * (len2 + 1));
+	int *row0, *row1, *row2;
 	int i, j;
+
+	ALLOC_ARRAY(row0, len2 + 1);
+	ALLOC_ARRAY(row1, len2 + 1);
+	ALLOC_ARRAY(row2, len2 + 1);
 
 	for (j = 0; j <= len2; j++)
 		row1[j] = j * a;

@@ -22,17 +22,15 @@ test_expect_success \
     'setup' \
     'mkdir path2 path2/baz &&
      echo Hi >path0 &&
-     ln -s path0 path1 &&
+     test_ln_s_add path0 path1 &&
+     test_ln_s_add ../path1 path2/bazbo &&
      echo Lo >path2/foo &&
-     ln -s ../path1 path2/bazbo &&
      echo Mi >path2/baz/b &&
      find path? \( -type f -o -type l \) -print |
      xargs git update-index --add &&
-     tree=`git write-tree` &&
+     tree=$(git write-tree) &&
      echo $tree'
 
-_x40='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
-_x40="$_x40$_x40$_x40$_x40$_x40$_x40$_x40$_x40"
 test_output () {
     sed -e "s/ $_x40	/ X	/" <current >check
     test_cmp expected check
@@ -152,6 +150,15 @@ test_expect_success \
     'git ls-tree -t $tree path2/bak >current &&
      cat >expected <<\EOF &&
 040000 tree X	path2
+EOF
+     test_output'
+
+test_expect_success \
+    'ls-tree with one path a prefix of the other' \
+    'git ls-tree $tree path2/baz path2/bazbo >current &&
+     cat >expected <<\EOF &&
+040000 tree X	path2/baz
+120000 blob X	path2/bazbo
 EOF
      test_output'
 

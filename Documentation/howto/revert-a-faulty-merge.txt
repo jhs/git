@@ -7,6 +7,10 @@ Abstract: Sometimes a branch that was already merged to the mainline
  after the offending branch is fixed.
 Message-ID: <7vocz8a6zk.fsf@gitster.siamese.dyndns.org>
 References: <alpine.LFD.2.00.0812181949450.14014@localhost.localdomain>
+Content-type: text/asciidoc
+
+How to revert a faulty merge
+============================
 
 Alan <alan@clueserver.org> said:
 
@@ -33,7 +37,7 @@ where A and B are on the side development that was not so good, M is the
 merge that brings these premature changes into the mainline, x are changes
 unrelated to what the side branch did and already made on the mainline,
 and W is the "revert of the merge M" (doesn't W look M upside down?).
-IOW, "diff W^..W" is similar to "diff -R M^..M".
+IOW, `"diff W^..W"` is similar to `"diff -R M^..M"`.
 
 Such a "revert" of a merge can be made with:
 
@@ -50,7 +54,7 @@ where C and D are to fix what was broken in A and B, and you may already
 have some other changes on the mainline after W.
 
 If you merge the updated side branch (with D at its tip), none of the
-changes made in A nor B will be in the result, because they were reverted
+changes made in A or B will be in the result, because they were reverted
 by W.  That is what Alan saw.
 
 Linus explains the situation:
@@ -86,7 +90,7 @@ with:
     $ git revert W
 
 This history would (ignoring possible conflicts between what W and W..Y
-changed) be equivalent to not having W nor Y at all in the history:
+changed) be equivalent to not having W or Y at all in the history:
 
  ---o---o---o---M---x---x-------x----
 	       /
@@ -117,9 +121,9 @@ If you reverted the revert in such a case as in the previous example:
        ---A---B                   A'--B'--C'
 
 where Y is the revert of W, A' and B' are rerolled A and B, and there may
-also be a further fix-up C' on the side branch.  "diff Y^..Y" is similar
-to "diff -R W^..W" (which in turn means it is similar to "diff M^..M"),
-and "diff A'^..C'" by definition would be similar but different from that,
+also be a further fix-up C' on the side branch.  `"diff Y^..Y"` is similar
+to `"diff -R W^..W"` (which in turn means it is similar to `"diff M^..M"`),
+and `"diff A'^..C'"` by definition would be similar but different from that,
 because it is a rerolled series of the earlier change.  There will be a
 lot of overlapping changes that result in conflicts.  So do not do "revert
 of revert" blindly without thinking..
@@ -142,6 +146,8 @@ different resolution strategies:
    revert of a merge was rebuilt from scratch (i.e. rebasing and fixing,
    as you seem to have interpreted), then re-merging the result without
    doing anything else fancy would be the right thing to do.
+   (See the ADDENDUM below for how to rebuild a branch from scratch
+   without changing its original branching-off point.)
 
 However, there are things to keep in mind when reverting a merge (and
 reverting such a revert).
@@ -158,7 +164,7 @@ merged. So it's debugging hell, because now you don't have lots of small
 changes that you can try to pinpoint which _part_ of it changes.
 
 But does it all work? Sure it does. You can revert a merge, and from a
-purely technical angle, git did it very naturally and had no real
+purely technical angle, Git did it very naturally and had no real
 troubles. It just considered it a change from "state before merge" to
 "state after merge", and that was it. Nothing complicated, nothing odd,
 nothing really dangerous. Git will do it without even thinking about it.
@@ -177,3 +183,91 @@ the answer is: "oops, I really shouldn't have merged it, because it wasn't
 ready yet, and I really need to undo _all_ of the merge"). So then you
 really should revert the merge, but when you want to re-do the merge, you
 now need to do it by reverting the revert.
+
+ADDENDUM
+
+Sometimes you have to rewrite one of a topic branch's commits *and* you can't
+change the topic's branching-off point.  Consider the following situation:
+
+ P---o---o---M---x---x---W---x
+  \         /
+   A---B---C
+
+where commit W reverted commit M because it turned out that commit B was wrong
+and needs to be rewritten, but you need the rewritten topic to still branch
+from commit P (perhaps P is a branching-off point for yet another branch, and
+you want be able to merge the topic into both branches).
+
+The natural thing to do in this case is to checkout the A-B-C branch and use
+"rebase -i P" to change commit B.  However this does not rewrite commit A,
+because "rebase -i" by default fast-forwards over any initial commits selected
+with the "pick" command.  So you end up with this:
+
+ P---o---o---M---x---x---W---x
+  \         /
+   A---B---C   <-- old branch
+    \
+     B'---C'   <-- naively rewritten branch
+
+To merge A-B'-C' into the mainline branch you would still have to first revert
+commit W in order to pick up the changes in A, but then it's likely that the
+changes in B' will conflict with the original B changes re-introduced by the
+reversion of W.
+
+However, you can avoid these problems if you recreate the entire branch,
+including commit A:
+
+   A'---B'---C'  <-- completely rewritten branch
+  /
+ P---o---o---M---x---x---W---x
+  \         /
+   A---B---C
+
+You can merge A'-B'-C' into the mainline branch without worrying about first
+reverting W.  Mainline's history would look like this:
+
+   A'---B'---C'------------------
+  /                              \
+ P---o---o---M---x---x---W---x---M2
+  \         /
+   A---B---C
+
+But if you don't actually need to change commit A, then you need some way to
+recreate it as a new commit with the same changes in it.  The rebase command's
+--no-ff option provides a way to do this:
+
+    $ git rebase [-i] --no-ff P
+
+The --no-ff option creates a new branch A'-B'-C' with all-new commits (all the
+SHA IDs will be different) even if in the interactive case you only actually
+modify commit B.  You can then merge this new branch directly into the mainline
+branch and be sure you'll get all of the branch's changes.
+
+You can also use --no-ff in cases where you just add extra commits to the topic
+to fix it up.  Let's revisit the situation discussed at the start of this howto:
+
+ P---o---o---M---x---x---W---x
+  \         /
+   A---B---C----------------D---E   <-- fixed-up topic branch
+
+At this point, you can use --no-ff to recreate the topic branch:
+
+    $ git checkout E
+    $ git rebase --no-ff P
+
+yielding
+
+   A'---B'---C'------------D'---E'  <-- recreated topic branch
+  /
+ P---o---o---M---x---x---W---x
+  \         /
+   A---B---C----------------D---E
+
+You can merge the recreated branch into the mainline without reverting commit W,
+and mainline's history will look like this:
+
+   A'---B'---C'------------D'---E'
+  /                              \
+ P---o---o---M---x---x---W---x---M2
+  \         /
+   A---B---C

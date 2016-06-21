@@ -7,6 +7,7 @@ gitview - A GTK based repository browser for git
 
 SYNOPSIS
 --------
+[verse]
 'gitview' [options] [args]
 
 DESCRIPTION
@@ -27,7 +28,7 @@ OPTIONS
 
 <args>::
 
-	All the valid option for gitlink:git-rev-list[1].
+	All the valid option for linkgit:git-rev-list[1].
 
 Key Bindings
 ------------

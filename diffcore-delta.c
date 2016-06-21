@@ -53,7 +53,8 @@ static struct spanhash_top *spanhash_rehash(struct spanhash_top *orig)
 	int osz = 1 << orig->alloc_log2;
 	int sz = osz << 1;
 
-	new = xmalloc(sizeof(*orig) + sizeof(struct spanhash) * sz);
+	new = xmalloc(st_add(sizeof(*orig),
+			     st_mult(sizeof(struct spanhash), sz)));
 	new->alloc_log2 = orig->alloc_log2 + 1;
 	new->free = INITIAL_FREE(new->alloc_log2);
 	memset(new->data, 0, sizeof(struct spanhash) * sz);
@@ -130,7 +131,8 @@ static struct spanhash_top *hash_chars(struct diff_filespec *one)
 	int is_text = !diff_filespec_is_binary(one);
 
 	i = INITIAL_HASH_SIZE;
-	hash = xmalloc(sizeof(*hash) + sizeof(struct spanhash) * (1<<i));
+	hash = xmalloc(st_add(sizeof(*hash),
+			      st_mult(sizeof(struct spanhash), 1<<i)));
 	hash->alloc_log2 = i;
 	hash->free = INITIAL_FREE(i);
 	memset(hash->data, 0, sizeof(struct spanhash) * (1<<i));
@@ -201,10 +203,15 @@ int diffcore_count_changes(struct diff_filespec *src,
 		while (d->cnt) {
 			if (d->hashval >= s->hashval)
 				break;
+			la += d->cnt;
 			d++;
 		}
 		src_cnt = s->cnt;
-		dst_cnt = d->hashval == s->hashval ? d->cnt : 0;
+		dst_cnt = 0;
+		if (d->cnt && d->hashval == s->hashval) {
+			dst_cnt = d->cnt;
+			d++;
+		}
 		if (src_cnt < dst_cnt) {
 			la += dst_cnt - src_cnt;
 			sc += src_cnt;
@@ -212,6 +219,10 @@ int diffcore_count_changes(struct diff_filespec *src,
 		else
 			sc += dst_cnt;
 		s++;
+	}
+	while (d->cnt) {
+		la += d->cnt;
+		d++;
 	}
 
 	if (!src_count_p)

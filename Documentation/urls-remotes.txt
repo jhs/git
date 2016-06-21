@@ -6,7 +6,7 @@ REMOTES[[REMOTES]]
 The name of one of the following can be used instead
 of a URL as `<repository>` argument:
 
-* a remote in the git configuration file: `$GIT_DIR/config`,
+* a remote in the Git configuration file: `$GIT_DIR/config`,
 * a file in the `$GIT_DIR/remotes` directory, or
 * a file in the `$GIT_DIR/branches` directory.
 
@@ -27,13 +27,16 @@ config file would appear like this:
 ------------
 	[remote "<name>"]
 		url = <url>
+		pushurl = <pushurl>
 		push = <refspec>
 		fetch = <refspec>
 ------------
 
+The `<pushurl>` is used for pushes only. It is optional and defaults
+to `<url>`.
 
 Named file in `$GIT_DIR/remotes`
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 You can choose to provide the name of a
 file in `$GIT_DIR/remotes`.  The URL
@@ -49,8 +52,8 @@ following format:
 
 ------------
 
-`Push:` lines are used by 'git-push' and
-`Pull:` lines are used by 'git-pull' and 'git-fetch'.
+`Push:` lines are used by 'git push' and
+`Pull:` lines are used by 'git pull' and 'git fetch'.
 Multiple `Push:` and `Pull:` lines may
 be specified for additional branch mappings.
 

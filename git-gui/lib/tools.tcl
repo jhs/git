@@ -87,8 +87,14 @@ proc tools_exec {fullname} {
 			return
 		}
 	} elseif {[is_config_true "guitool.$fullname.confirm"]} {
-		if {[ask_popup [mc "Are you sure you want to run %s?" $fullname]] ne {yes}} {
-			return
+		if {[is_config_true "guitool.$fullname.needsfile"]} {
+			if {[ask_popup [mc "Are you sure you want to run %1\$s on file \"%2\$s\"?" $fullname $current_diff_path]] ne {yes}} {
+				return
+			}
+		} else {
+			if {[ask_popup [mc "Are you sure you want to run %s?" $fullname]] ne {yes}} {
+				return
+			}
 		}
 	}
 
@@ -146,7 +152,7 @@ proc tools_complete {fullname w {ok 1}} {
 	}
 
 	if {$ok} {
-		set msg [mc "Tool completed succesfully: %s" $fullname]
+		set msg [mc "Tool completed successfully: %s" $fullname]
 	} else {
 		set msg [mc "Tool failed: %s" $fullname]
 	}

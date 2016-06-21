@@ -3,28 +3,35 @@ git-rebase(1)
 
 NAME
 ----
-git-rebase - Forward-port local commits to the updated upstream head
+git-rebase - Reapply commits on top of another base tip
 
 SYNOPSIS
 --------
 [verse]
-'git rebase' [-i | --interactive] [options] [--onto <newbase>]
-	<upstream> [<branch>]
-'git rebase' [-i | --interactive] [options] --onto <newbase>
+'git rebase' [-i | --interactive] [options] [--exec <cmd>] [--onto <newbase>]
+	[<upstream> [<branch>]]
+'git rebase' [-i | --interactive] [options] [--exec <cmd>] [--onto <newbase>]
 	--root [<branch>]
-
-'git rebase' --continue | --skip | --abort
+'git rebase' --continue | --skip | --abort | --edit-todo
 
 DESCRIPTION
 -----------
-If <branch> is specified, 'git-rebase' will perform an automatic
+If <branch> is specified, 'git rebase' will perform an automatic
 `git checkout <branch>` before doing anything else.  Otherwise
 it remains on the current branch.
 
+If <upstream> is not specified, the upstream configured in
+branch.<name>.remote and branch.<name>.merge options will be used (see
+linkgit:git-config[1] for details) and the `--fork-point` option is
+assumed.  If you are currently not on any branch or if the current
+branch does not have a configured upstream, the rebase will abort.
+
 All changes made by commits in the current branch but that are not
 in <upstream> are saved to a temporary area.  This is the same set
-of commits that would be shown by `git log <upstream>..HEAD` (or
-`git log HEAD`, if --root is specified).
+of commits that would be shown by `git log <upstream>..HEAD`; or by
+`git log 'fork_point'..HEAD`, if `--fork-point` is active (see the
+description on `--fork-point` below); or by `git log HEAD`, if the
+`--root` option is specified.
 
 The current branch is reset to <upstream>, or <newbase> if the
 --onto option was supplied.  This has the exact same effect as
@@ -40,7 +47,7 @@ with a different commit message or timestamp will be skipped).
 It is possible that a merge failure will prevent this process from being
 completely automatic.  You will have to resolve any such merge failure
 and run `git rebase --continue`.  Another option is to bypass the commit
-that caused the merge failure with `git rebase --skip`.  To restore the
+that caused the merge failure with `git rebase --skip`.  To check out the
 original <branch> and remove the .git/rebase-apply working files, use the
 command `git rebase --abort` instead.
 
@@ -66,13 +73,14 @@ would be:
     D---E---F---G master
 ------------
 
-The latter form is just a short-hand of `git checkout topic`
-followed by `git rebase master`.
+*NOTE:* The latter form is just a short-hand of `git checkout topic`
+followed by `git rebase master`. When rebase exits `topic` will
+remain the checked-out branch.
 
 If the upstream branch already contains a change you have made (e.g.,
 because you mailed a patch which was applied upstream), then that commit
 will be skipped. For example, running `git rebase master` on the
-following history (in which A' and A introduce the same set of changes,
+following history (in which `A'` and `A` introduce the same set of changes,
 but have different committer information):
 
 ------------
@@ -170,10 +178,10 @@ This is useful if F and G were flawed in some way, or should not be
 part of topicA.  Note that the argument to --onto and the <upstream>
 parameter can be any valid commit-ish.
 
-In case of conflict, 'git-rebase' will stop at the first problematic commit
-and leave conflict markers in the tree.  You can use 'git-diff' to locate
+In case of conflict, 'git rebase' will stop at the first problematic commit
+and leave conflict markers in the tree.  You can use 'git diff' to locate
 the markers (<<<<<<) and make edits to resolve the conflict.  For each
-file you edit, you need to tell git that the conflict has been resolved,
+file you edit, you need to tell Git that the conflict has been resolved,
 typically this would be done with
 
 
@@ -187,22 +195,49 @@ desired resolution, you can continue the rebasing process with
     git rebase --continue
 
 
-Alternatively, you can undo the 'git-rebase' with
+Alternatively, you can undo the 'git rebase' with
 
 
     git rebase --abort
 
+CONFIGURATION
+-------------
+
+rebase.stat::
+	Whether to show a diffstat of what changed upstream since the last
+	rebase. False by default.
+
+rebase.autoSquash::
+	If set to true enable '--autosquash' option by default.
+
+rebase.autoStash::
+	If set to true enable '--autostash' option by default.
+
+rebase.missingCommitsCheck::
+	If set to "warn", print warnings about removed commits in
+	interactive mode. If set to "error", print the warnings and
+	stop the rebase. If set to "ignore", no checking is
+	done. "ignore" by default.
+
+rebase.instructionFormat::
+	Custom commit list format to use during an '--interactive' rebase.
+
 OPTIONS
 -------
-<newbase>::
+--onto <newbase>::
 	Starting point at which to create the new commits. If the
 	--onto option is not specified, the starting point is
 	<upstream>.  May be any valid commit, and not just an
 	existing branch name.
++
+As a special case, you may use "A\...B" as a shortcut for the
+merge base of A and B if there is exactly one merge base. You can
+leave out at most one of A and B, in which case it defaults to HEAD.
 
 <upstream>::
 	Upstream branch to compare against.  May be any valid commit,
-	not just an existing branch name.
+	not just an existing branch name. Defaults to the configured
+	upstream for the current branch.
 
 <branch>::
 	Working branch; defaults to HEAD.
@@ -211,31 +246,80 @@ OPTIONS
 	Restart the rebasing process after having resolved a merge conflict.
 
 --abort::
-	Restore the original branch and abort the rebase operation.
+	Abort the rebase operation and reset HEAD to the original
+	branch. If <branch> was provided when the rebase operation was
+	started, then HEAD will be reset to <branch>. Otherwise HEAD
+	will be reset to where it was when the rebase operation was
+	started.
+
+--keep-empty::
+	Keep the commits that do not change anything from its
+	parents in the result.
 
 --skip::
 	Restart the rebasing process by skipping the current patch.
+
+--edit-todo::
+	Edit the todo list during an interactive rebase.
 
 -m::
 --merge::
 	Use merging strategies to rebase.  When the recursive (default) merge
 	strategy is used, this allows rebase to be aware of renames on the
 	upstream side.
++
+Note that a rebase merge works by replaying each commit from the working
+branch on top of the <upstream> branch.  Because of this, when a merge
+conflict happens, the side reported as 'ours' is the so-far rebased
+series, starting with <upstream>, and 'theirs' is the working branch.  In
+other words, the sides are swapped.
 
 -s <strategy>::
 --strategy=<strategy>::
-	Use the given merge strategy; can be supplied more than
-	once to specify them in the order they should be tried.
-	If there is no `-s` option, a built-in list of strategies
-	is used instead ('git-merge-recursive' when merging a single
-	head, 'git-merge-octopus' otherwise).  This implies --merge.
+	Use the given merge strategy.
+	If there is no `-s` option 'git merge-recursive' is used
+	instead.  This implies --merge.
++
+Because 'git rebase' replays each commit from the working branch
+on top of the <upstream> branch using the given strategy, using
+the 'ours' strategy simply discards all patches from the <branch>,
+which makes little sense.
+
+-X <strategy-option>::
+--strategy-option=<strategy-option>::
+	Pass the <strategy-option> through to the merge strategy.
+	This implies `--merge` and, if no strategy has been
+	specified, `-s recursive`.  Note the reversal of 'ours' and
+	'theirs' as noted above for the `-m` option.
+
+-S[<keyid>]::
+--gpg-sign[=<keyid>]::
+	GPG-sign commits. The `keyid` argument is optional and
+	defaults to the committer identity; if specified, it must be
+	stuck to the option without a space.
+
+-q::
+--quiet::
+	Be quiet. Implies --no-stat.
 
 -v::
 --verbose::
-	Display a diffstat of what changed upstream since the last rebase.
+	Be verbose. Implies --stat.
+
+--stat::
+	Show a diffstat of what changed upstream since the last rebase. The
+	diffstat is also controlled by the configuration option rebase.stat.
+
+-n::
+--no-stat::
+	Do not show a diffstat as part of the rebase process.
 
 --no-verify::
 	This option bypasses the pre-rebase hook.  See also linkgit:githooks[5].
+
+--verify::
+	Allows the pre-rebase hook to run, which is the default.  This option can
+	be used to override --no-verify.  See also linkgit:githooks[5].
 
 -C<n>::
 	Ensure at least <n> lines of surrounding context match before
@@ -243,9 +327,42 @@ OPTIONS
 	context exist they all must match.  By default no context is
 	ever ignored.
 
+-f::
+--force-rebase::
+	Force a rebase even if the current branch is up-to-date and
+	the command without `--force` would return without doing anything.
++
+You may find this (or --no-ff with an interactive rebase) helpful after
+reverting a topic branch merge, as this option recreates the topic branch with
+fresh commits so it can be remerged successfully without needing to "revert
+the reversion" (see the
+link:howto/revert-a-faulty-merge.html[revert-a-faulty-merge How-To] for details).
+
+--fork-point::
+--no-fork-point::
+	Use reflog to find a better common ancestor between <upstream>
+	and <branch> when calculating which commits have been
+	introduced by <branch>.
++
+When --fork-point is active, 'fork_point' will be used instead of
+<upstream> to calculate the set of commits to rebase, where
+'fork_point' is the result of `git merge-base --fork-point <upstream>
+<branch>` command (see linkgit:git-merge-base[1]).  If 'fork_point'
+ends up being empty, the <upstream> will be used as a fallback.
++
+If either <upstream> or --root is given on the command line, then the
+default is `--no-fork-point`, otherwise the default is `--fork-point`.
+
+--ignore-whitespace::
 --whitespace=<option>::
-	This flag is passed to the 'git-apply' program
+	These flag are passed to the 'git apply' program
 	(see linkgit:git-apply[1]) that applies the patch.
+	Incompatible with the --interactive option.
+
+--committer-date-is-author-date::
+--ignore-date::
+	These flags are passed to 'git am' to easily change the dates
+	of the rebased commits (see linkgit:git-am[1]).
 	Incompatible with the --interactive option.
 
 -i::
@@ -253,26 +370,96 @@ OPTIONS
 	Make a list of the commits which are about to be rebased.  Let the
 	user edit that list before rebasing.  This mode can also be used to
 	split commits (see SPLITTING COMMITS below).
++
+The commit list format can be changed by setting the configuration option
+rebase.instructionFormat.  A customized instruction format will automatically
+have the long commit hash prepended to the format.
 
 -p::
 --preserve-merges::
-	Instead of ignoring merges, try to recreate them.
+	Recreate merge commits instead of flattening the history by replaying
+	commits a merge commit introduces. Merge conflict resolutions or manual
+	amendments to merge commits are not preserved.
++
+This uses the `--interactive` machinery internally, but combining it
+with the `--interactive` option explicitly is generally not a good
+idea unless you know what you are doing (see BUGS below).
+
+-x <cmd>::
+--exec <cmd>::
+	Append "exec <cmd>" after each line creating a commit in the
+	final history. <cmd> will be interpreted as one or more shell
+	commands.
++
+This option can only be used with the `--interactive` option
+(see INTERACTIVE MODE below).
++
+You may execute several commands by either using one instance of `--exec`
+with several commands:
++
+	git rebase -i --exec "cmd1 && cmd2 && ..."
++
+or by giving more than one `--exec`:
++
+	git rebase -i --exec "cmd1" --exec "cmd2" --exec ...
++
+If `--autosquash` is used, "exec" lines will not be appended for
+the intermediate commits, and will only appear at the end of each
+squash/fixup series.
 
 --root::
 	Rebase all commits reachable from <branch>, instead of
 	limiting them with an <upstream>.  This allows you to rebase
-	the root commit(s) on a branch.  Must be used with --onto, and
+	the root commit(s) on a branch.  When used with --onto, it
 	will skip changes already contained in <newbase> (instead of
-	<upstream>).  When used together with --preserve-merges, 'all'
-	root commits will be rewritten to have <newbase> as parent
+	<upstream>) whereas without --onto it will operate on every change.
+	When used together with both --onto and --preserve-merges,
+	'all' root commits will be rewritten to have <newbase> as parent
 	instead.
+
+--autosquash::
+--no-autosquash::
+	When the commit log message begins with "squash! ..." (or
+	"fixup! ..."), and there is a commit whose title begins with
+	the same ..., automatically modify the todo list of rebase -i
+	so that the commit marked for squashing comes right after the
+	commit to be modified, and change the action of the moved
+	commit from `pick` to `squash` (or `fixup`).  Ignores subsequent
+	"fixup! " or "squash! " after the first, in case you referred to an
+	earlier fixup/squash with `git commit --fixup/--squash`.
++
+This option is only valid when the '--interactive' option is used.
++
+If the '--autosquash' option is enabled by default using the
+configuration variable `rebase.autoSquash`, this option can be
+used to override and disable this setting.
+
+--autostash::
+--no-autostash::
+	Automatically create a temporary stash before the operation
+	begins, and apply it after the operation ends.  This means
+	that you can run rebase on a dirty worktree.  However, use
+	with care: the final stash application after a successful
+	rebase might result in non-trivial conflicts.
+
+--no-ff::
+	With --interactive, cherry-pick all rebased commits instead of
+	fast-forwarding over the unchanged ones.  This ensures that the
+	entire history of the rebased branch is composed of new commits.
++
+Without --interactive, this is a synonym for --force-rebase.
++
+You may find this helpful after reverting a topic branch merge, as this option
+recreates the topic branch with fresh commits so it can be remerged
+successfully without needing to "revert the reversion" (see the
+link:howto/revert-a-faulty-merge.html[revert-a-faulty-merge How-To] for details).
 
 include::merge-strategies.txt[]
 
 NOTES
 -----
 
-You should understand the implications of using 'git-rebase' on a
+You should understand the implications of using 'git rebase' on a
 repository that you share.  See also RECOVERING FROM UPSTREAM REBASE
 below.
 
@@ -299,10 +486,13 @@ The interactive mode is meant for this type of workflow:
 
 where point 2. consists of several instances of
 
-a. regular use
+a) regular use
+
  1. finish something worthy of a commit
  2. commit
-b. independent fixup
+
+b) independent fixup
+
  1. realize that something does not work
  2. fix that
  3. commit it
@@ -328,27 +518,36 @@ pick fa1afe1 The oneline of the next commit
 ...
 -------------------------------------------
 
-The oneline descriptions are purely for your pleasure; 'git-rebase' will
+The oneline descriptions are purely for your pleasure; 'git rebase' will
 not look at them but at the commit names ("deadbee" and "fa1afe1" in this
 example), so do not delete or edit the names.
 
 By replacing the command "pick" with the command "edit", you can tell
-'git-rebase' to stop after applying that commit, so that you can edit
+'git rebase' to stop after applying that commit, so that you can edit
 the files and/or the commit message, amend the commit, and continue
 rebasing.
 
-If you want to fold two or more commits into one, replace the command
-"pick" with "squash" for the second and subsequent commit.  If the
-commits had different authors, it will attribute the squashed commit to
-the author of the first commit.
+If you just want to edit the commit message for a commit, replace the
+command "pick" with the command "reword".
 
-In both cases, or when a "pick" does not succeed (because of merge
-errors), the loop will stop to let you fix things, and you can continue
-the loop with `git rebase --continue`.
+To drop a commit, replace the command "pick" with "drop", or just
+delete the matching line.
+
+If you want to fold two or more commits into one, replace the command
+"pick" for the second and subsequent commits with "squash" or "fixup".
+If the commits had different authors, the folded commit will be
+attributed to the author of the first commit.  The suggested commit
+message for the folded commit is the concatenation of the commit
+messages of the first commit and of those with the "squash" command,
+but omits the commit messages of commits with the "fixup" command.
+
+'git rebase' will stop when "pick" has been replaced with "edit" or
+when a command fails due to merge errors. When you are done editing
+and/or resolving conflicts you can continue with `git rebase --continue`.
 
 For example, if you want to reorder the last 5 commits, such that what
 was HEAD~4 becomes the new HEAD. To achieve that, you would call
-'git-rebase' like this:
+'git rebase' like this:
 
 ----------------------
 $ git rebase -i HEAD~5
@@ -373,12 +572,54 @@ sure that the current HEAD is "B", and call
 $ git rebase -i -p --onto Q O
 -----------------------------
 
+Reordering and editing commits usually creates untested intermediate
+steps.  You may want to check that your history editing did not break
+anything by running a test, or at least recompiling at intermediate
+points in history by using the "exec" command (shortcut "x").  You may
+do so by creating a todo list like this one:
+
+-------------------------------------------
+pick deadbee Implement feature XXX
+fixup f1a5c00 Fix to feature XXX
+exec make
+pick c0ffeee The oneline of the next commit
+edit deadbab The oneline of the commit after
+exec cd subdir; make test
+...
+-------------------------------------------
+
+The interactive rebase will stop when a command fails (i.e. exits with
+non-0 status) to give you an opportunity to fix the problem. You can
+continue with `git rebase --continue`.
+
+The "exec" command launches the command in a shell (the one specified
+in `$SHELL`, or the default shell if `$SHELL` is not set), so you can
+use shell features (like "cd", ">", ";" ...). The command is run from
+the root of the working tree.
+
+----------------------------------
+$ git rebase -i --exec "make test"
+----------------------------------
+
+This command lets you check that intermediate commits are compilable.
+The todo list becomes like that:
+
+--------------------
+pick 5928aea one
+exec make test
+pick 04d0fda two
+exec make test
+pick ba46169 three
+exec make test
+pick f4593f9 four
+exec make test
+--------------------
 
 SPLITTING COMMITS
 -----------------
 
 In interactive mode, you can mark commits with the action "edit".  However,
-this does not necessarily mean that 'git-rebase' expects the result of this
+this does not necessarily mean that 'git rebase' expects the result of this
 edit to be exactly one commit.  Indeed, you can undo the commit, or you can
 add other commits.  This can be used to split a commit into two:
 
@@ -394,7 +635,7 @@ add other commits.  This can be used to split a commit into two:
 
 - Now add the changes to the index that you want to have in the first
   commit.  You can use `git add` (possibly interactively) or
-  'git-gui' (or both) to do that.
+  'git gui' (or both) to do that.
 
 - Commit the now-current index with whatever commit message is appropriate
   now.
@@ -405,7 +646,7 @@ add other commits.  This can be used to split a commit into two:
 
 If you are not absolutely sure that the intermediate revisions are
 consistent (they compile, pass the testsuite, etc.) you should use
-'git-stash' to stash away the not-yet-committed changes
+'git stash' to stash away the not-yet-committed changes
 after each commit, test, and amend the commit if fixes are necessary.
 
 
@@ -468,8 +709,8 @@ Easy case: The changes are literally the same.::
 Hard case: The changes are not the same.::
 
 	This happens if the 'subsystem' rebase had conflicts, or used
-	`\--interactive` to omit, edit, or squash commits; or if the
-	upstream used one of `commit \--amend`, `reset`, or
+	`--interactive` to omit, edit, squash, or fixup commits; or
+	if the upstream used one of `commit --amend`, `reset`, or
 	`filter-branch`.
 
 
@@ -480,7 +721,7 @@ Only works if the changes (patch IDs based on the diff contents) on
 'subsystem' are literally the same before and after the rebase
 'subsystem' did.
 
-In that case, the fix is easy because 'git-rebase' knows to skip
+In that case, the fix is easy because 'git rebase' knows to skip
 changes that are already present in the new upstream.  So if you say
 (assuming you're on 'topic')
 ------------
@@ -505,15 +746,15 @@ correspond to the ones before the rebase.
 NOTE: While an "easy case recovery" sometimes appears to be successful
       even in the hard case, it may have unintended consequences.  For
       example, a commit that was removed via `git rebase
-      \--interactive` will be **resurrected**!
+      --interactive` will be **resurrected**!
 
-The idea is to manually tell 'git-rebase' "where the old 'subsystem'
+The idea is to manually tell 'git rebase' "where the old 'subsystem'
 ended and your 'topic' began", that is, what the old merge-base
 between them was.  You will have to find a way to name the last commit
 of the old 'subsystem', for example:
 
-* With the 'subsystem' reflog: after 'git-fetch', the old tip of
-  'subsystem' is at `subsystem@\{1}`.  Subsequent fetches will
+* With the 'subsystem' reflog: after 'git fetch', the old tip of
+  'subsystem' is at `subsystem@{1}`.  Subsequent fetches will
   increase the number.  (See linkgit:git-reflog[1].)
 
 * Relative to the tip of 'topic': knowing that your 'topic' has three
@@ -529,15 +770,27 @@ The ripple effect of a "hard case" recovery is especially bad:
 'everyone' downstream from 'topic' will now have to perform a "hard
 case" recovery too!
 
+BUGS
+----
+The todo list presented by `--preserve-merges --interactive` does not
+represent the topology of the revision graph.  Editing commits and
+rewording their commit messages should work fine, but attempts to
+reorder commits tend to produce counterintuitive results.
 
-Authors
-------
-Written by Junio C Hamano <gitster@pobox.com> and
-Johannes E. Schindelin <johannes.schindelin@gmx.de>
-
-Documentation
---------------
-Documentation by Junio C Hamano and the git-list <git@vger.kernel.org>.
+For example, an attempt to rearrange
+------------
+1 --- 2 --- 3 --- 4 --- 5
+------------
+to
+------------
+1 --- 2 --- 4 --- 3 --- 5
+------------
+by moving the "pick 4" line will result in the following history:
+------------
+	3
+       /
+1 --- 2 --- 4 --- 5
+------------
 
 GIT
 ---

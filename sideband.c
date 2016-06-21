@@ -1,3 +1,4 @@
+#include "cache.h"
 #include "pkt-line.h"
 #include "sideband.h"
 
@@ -19,7 +20,7 @@
 
 #define FIX_SIZE 10  /* large enough for any of the above */
 
-int recv_sideband(const char *me, int in_stream, int out, int err)
+int recv_sideband(const char *me, int in_stream, int out)
 {
 	unsigned pf = strlen(PREFIX);
 	unsigned sf;
@@ -29,7 +30,7 @@ int recv_sideband(const char *me, int in_stream, int out, int err)
 
 	memcpy(buf, PREFIX, pf);
 	term = getenv("TERM");
-	if (term && strcmp(term, "dumb"))
+	if (isatty(2) && term && strcmp(term, "dumb"))
 		suffix = ANSI_SUFFIX;
 	else
 		suffix = DUMB_SUFFIX;
@@ -37,12 +38,11 @@ int recv_sideband(const char *me, int in_stream, int out, int err)
 
 	while (1) {
 		int band, len;
-		len = packet_read_line(in_stream, buf + pf, LARGE_PACKET_MAX);
+		len = packet_read(in_stream, NULL, NULL, buf + pf, LARGE_PACKET_MAX, 0);
 		if (len == 0)
 			break;
 		if (len < 1) {
-			len = sprintf(buf, "%s: protocol error: no band designator\n", me);
-			safe_write(err, buf, len);
+			fprintf(stderr, "%s: protocol error: no band designator\n", me);
 			return SIDEBAND_PROTOCOL_ERROR;
 		}
 		band = buf[pf] & 0xff;
@@ -50,8 +50,8 @@ int recv_sideband(const char *me, int in_stream, int out, int err)
 		switch (band) {
 		case 3:
 			buf[pf] = ' ';
-			buf[pf+1+len] = '\n';
-			safe_write(err, buf, pf+1+len+1);
+			buf[pf+1+len] = '\0';
+			fprintf(stderr, "%s\n", buf);
 			return SIDEBAND_REMOTE_ERROR;
 		case 2:
 			buf[pf] = ' ';
@@ -95,12 +95,12 @@ int recv_sideband(const char *me, int in_stream, int out, int err)
 					memcpy(save, b + brk, sf);
 					b[brk + sf - 1] = b[brk - 1];
 					memcpy(b + brk - 1, suffix, sf);
-					safe_write(err, b, brk + sf);
+					fprintf(stderr, "%.*s", brk + sf, b);
 					memcpy(b + brk, save, sf);
 					len -= brk;
 				} else {
 					int l = brk ? brk : len;
-					safe_write(err, b, l);
+					fprintf(stderr, "%.*s", l, b);
 					len -= l;
 				}
 
@@ -109,13 +109,11 @@ int recv_sideband(const char *me, int in_stream, int out, int err)
 			} while (len);
 			continue;
 		case 1:
-			safe_write(out, buf + pf+1, len);
+			write_or_die(out, buf + pf+1, len);
 			continue;
 		default:
-			len = sprintf(buf,
-				      "%s: protocol error: bad band #%d\n",
-				      me, band);
-			safe_write(err, buf, len);
+			fprintf(stderr, "%s: protocol error: bad band #%d\n",
+				me, band);
 			return SIDEBAND_PROTOCOL_ERROR;
 		}
 	}
@@ -138,10 +136,15 @@ ssize_t send_sideband(int fd, int band, const char *data, ssize_t sz, int packet
 		n = sz;
 		if (packet_max - 5 < n)
 			n = packet_max - 5;
-		sprintf(hdr, "%04x", n + 5);
-		hdr[4] = band;
-		safe_write(fd, hdr, 5);
-		safe_write(fd, p, n);
+		if (0 <= band) {
+			xsnprintf(hdr, sizeof(hdr), "%04x", n + 5);
+			hdr[4] = band;
+			write_or_die(fd, hdr, 5);
+		} else {
+			xsnprintf(hdr, sizeof(hdr), "%04x", n + 4);
+			write_or_die(fd, hdr, 4);
+		}
+		write_or_die(fd, p, n);
 		p += n;
 		sz -= n;
 	}

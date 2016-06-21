@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 # This tool is copyright (c) 2005, Matthias Urlichs.
 # It is released under the Gnu Public License, version 2.
@@ -13,6 +13,7 @@
 # The head revision is on branch "origin" by default.
 # You can change that with the '-o' option.
 
+use 5.008;
 use strict;
 use warnings;
 use Getopt::Long;
@@ -23,24 +24,25 @@ use File::Basename qw(basename dirname);
 use Time::Local;
 use IO::Socket;
 use IO::Pipe;
-use POSIX qw(strftime dup2 ENOENT);
+use POSIX qw(strftime tzset dup2 ENOENT);
 use IPC::Open2;
+use Git qw(get_tz_offset);
 
 $SIG{'PIPE'}="IGNORE";
-$ENV{'TZ'}="UTC";
+set_timezone('UTC');
 
-our ($opt_h,$opt_o,$opt_v,$opt_k,$opt_u,$opt_d,$opt_p,$opt_C,$opt_z,$opt_i,$opt_P, $opt_s,$opt_m,@opt_M,$opt_A,$opt_S,$opt_L, $opt_a, $opt_r);
-my (%conv_author_name, %conv_author_email);
+our ($opt_h,$opt_o,$opt_v,$opt_k,$opt_u,$opt_d,$opt_p,$opt_C,$opt_z,$opt_i,$opt_P, $opt_s,$opt_m,@opt_M,$opt_A,$opt_S,$opt_L, $opt_a, $opt_r, $opt_R);
+my (%conv_author_name, %conv_author_email, %conv_author_tz);
 
 sub usage(;$) {
 	my $msg = shift;
 	print(STDERR "Error: $msg\n") if $msg;
 	print STDERR <<END;
-Usage: git cvsimport     # fetch/update GIT from CVS
+usage: git cvsimport     # fetch/update GIT from CVS
        [-o branch-for-HEAD] [-h] [-v] [-d CVSROOT] [-A author-conv-file]
        [-p opts-for-cvsps] [-P file] [-C GIT_repository] [-z fuzz] [-i] [-k]
        [-u] [-s subst] [-a] [-m] [-M regex] [-S regex] [-L commitlimit]
-       [-r remote] [CVS_module]
+       [-r remote] [-R] [CVS_module]
 END
 	exit(1);
 }
@@ -57,6 +59,14 @@ sub read_author_info($) {
 			$user = $1;
 			$conv_author_name{$user} = $2;
 			$conv_author_email{$user} = $3;
+		}
+		# or with an optional timezone:
+		#   spawn=Simon Pawn <spawn@frog-pond.org> America/Chicago
+		elsif (m/^(\S+?)\s*=\s*(.+?)\s*<(.+)>\s*(\S+?)\s*$/) {
+			$user = $1;
+			$conv_author_name{$user} = $2;
+			$conv_author_email{$user} = $3;
+			$conv_author_tz{$user} = $4;
 		}
 		# However, we also read from CVSROOT/users format
 		# to ease migration.
@@ -83,34 +93,62 @@ sub write_author_info($) {
 	  die("Failed to open $file for writing: $!");
 
 	foreach (keys %conv_author_name) {
-		print $f "$_=$conv_author_name{$_} <$conv_author_email{$_}>\n";
+		print $f "$_=$conv_author_name{$_} <$conv_author_email{$_}>";
+		print $f " $conv_author_tz{$_}" if ($conv_author_tz{$_});
+		print $f "\n";
 	}
 	close ($f);
 }
 
+# Versions of perl before 5.10.0 may not automatically check $TZ each
+# time localtime is run (most platforms will do so only the first time).
+# We can work around this by using tzset() to update the internal
+# variable whenever we change the environment.
+sub set_timezone {
+	$ENV{TZ} = shift;
+	tzset();
+}
+
 # convert getopts specs for use by git config
+my %longmap = (
+	'A:' => 'authors-file',
+	'M:' => 'merge-regex',
+	'P:' => undef,
+	'R' => 'track-revisions',
+	'S:' => 'ignore-paths',
+);
+
 sub read_repo_config {
-    # Split the string between characters, unless there is a ':'
-    # So "abc:de" becomes ["a", "b", "c:", "d", "e"]
+	# Split the string between characters, unless there is a ':'
+	# So "abc:de" becomes ["a", "b", "c:", "d", "e"]
 	my @opts = split(/ *(?!:)/, shift);
 	foreach my $o (@opts) {
 		my $key = $o;
 		$key =~ s/://g;
 		my $arg = 'git config';
 		$arg .= ' --bool' if ($o !~ /:$/);
+		my $ckey = $key;
 
-        chomp(my $tmp = `$arg --get cvsimport.$key`);
+		if (exists $longmap{$o}) {
+			# An uppercase option like -R cannot be
+			# expressed in the configuration, as the
+			# variable names are downcased.
+			$ckey = $longmap{$o};
+			next if (! defined $ckey);
+			$ckey =~ s/-//g;
+		}
+		chomp(my $tmp = `$arg --get cvsimport.$ckey`);
 		if ($tmp && !($arg =~ /--bool/ && $tmp eq 'false')) {
-            no strict 'refs';
-            my $opt_name = "opt_" . $key;
-            if (!$$opt_name) {
-                $$opt_name = $tmp;
-            }
+			no strict 'refs';
+			my $opt_name = "opt_" . $key;
+			if (!$$opt_name) {
+				$$opt_name = $tmp;
+			}
 		}
 	}
 }
 
-my $opts = "haivmkuo:d:p:r:C:z:s:M:P:A:S:L:";
+my $opts = "haivmkuo:d:p:r:C:z:s:M:P:A:S:L:R";
 read_repo_config($opts);
 Getopt::Long::Configure( 'no_ignore_case', 'bundling' );
 
@@ -209,6 +247,31 @@ sub new {
 	return $self;
 }
 
+sub find_password_entry {
+	my ($cvspass, @cvsroot) = @_;
+	my ($file, $delim) = @$cvspass;
+	my $pass;
+	local ($_);
+
+	if (open(my $fh, $file)) {
+		# :pserver:cvs@mea.tmt.tele.fi:/cvsroot/zmailer Ah<Z
+		CVSPASSFILE:
+		while (<$fh>) {
+			chomp;
+			s/^\/\d+\s+//;
+			my ($w, $p) = split($delim,$_,2);
+			for my $cvsroot (@cvsroot) {
+				if ($w eq $cvsroot) {
+					$pass = $p;
+					last CVSPASSFILE;
+				}
+			}
+		}
+		close($fh);
+	}
+	return $pass;
+}
+
 sub conn {
 	my $self = shift;
 	my $repo = $self->{'fullrep'};
@@ -238,21 +301,27 @@ sub conn {
 		}
 		my $rr = ":pserver:$user\@$serv:$port$repo";
 
-		unless ($pass) {
-			open(H,$ENV{'HOME'}."/.cvspass") and do {
-				# :pserver:cvs@mea.tmt.tele.fi:/cvsroot/zmailer Ah<Z
-				while (<H>) {
-					chomp;
-					s/^\/\d+\s+//;
-					my ($w,$p) = split(/\s/,$_,2);
-					if ($w eq $rr or $w eq $rr2) {
-						$pass = $p;
-						last;
-					}
+		if ($pass) {
+			$pass = $self->_scramble($pass);
+		} else {
+			my @cvspass = ([$ENV{'HOME'}."/.cvspass", qr/\s/],
+				       [$ENV{'HOME'}."/.cvs/cvspass", qr/=/]);
+			my @loc = ();
+			foreach my $cvspass (@cvspass) {
+				my $p = find_password_entry($cvspass, $rr, $rr2);
+				if ($p) {
+					push @loc, $cvspass->[0];
+					$pass = $p;
 				}
-			};
+			}
+
+			if (1 < @loc) {
+				die("Multiple cvs password files have ".
+				    "entries for CVSROOT $opt_d: @loc");
+			} elsif (!$pass) {
+				$pass = "A";
+			}
 		}
-		$pass="A" unless $pass;
 
 		my ($s, $rep);
 		if ($proxyhost) {
@@ -346,7 +415,9 @@ sub conn {
 	$self->{'socketo'}->write("valid-requests\n");
 	$self->{'socketo'}->flush();
 
-	chomp(my $rep=$self->readline());
+	my $rep=$self->readline();
+	die "Failed to read from server" unless defined $rep;
+	chomp($rep);
 	if ($rep !~ s/^Valid-requests\s*//) {
 		$rep="<unknown>" unless $rep;
 		die "Expected Valid-requests from server, but got: $rep\n";
@@ -484,6 +555,42 @@ sub _fetchfile {
 	return $res;
 }
 
+sub _scramble {
+	my ($self, $pass) = @_;
+	my $scrambled = "A";
+
+	return $scrambled unless $pass;
+
+	my $pass_len = length($pass);
+	my @pass_arr = split("", $pass);
+	my $i;
+
+	# from cvs/src/scramble.c
+	my @shifts = (
+		  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
+		 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+		114,120, 53, 79, 96,109, 72,108, 70, 64, 76, 67,116, 74, 68, 87,
+		111, 52, 75,119, 49, 34, 82, 81, 95, 65,112, 86,118,110,122,105,
+		 41, 57, 83, 43, 46,102, 40, 89, 38,103, 45, 50, 42,123, 91, 35,
+		125, 55, 54, 66,124,126, 59, 47, 92, 71,115, 78, 88,107,106, 56,
+		 36,121,117,104,101,100, 69, 73, 99, 63, 94, 93, 39, 37, 61, 48,
+		 58,113, 32, 90, 44, 98, 60, 51, 33, 97, 62, 77, 84, 80, 85,223,
+		225,216,187,166,229,189,222,188,141,249,148,200,184,136,248,190,
+		199,170,181,204,138,232,218,183,255,234,220,247,213,203,226,193,
+		174,172,228,252,217,201,131,230,197,211,145,238,161,179,160,212,
+		207,221,254,173,202,146,224,151,140,196,205,130,135,133,143,246,
+		192,159,244,239,185,168,215,144,139,165,180,157,147,186,214,176,
+		227,231,219,169,175,156,206,198,129,164,150,210,154,177,134,127,
+		182,128,158,208,162,132,167,209,149,241,153,251,237,236,171,195,
+		243,233,253,240,194,250,191,155,142,137,245,235,163,242,178,152
+	);
+
+	for ($i = 0; $i < $pass_len; $i++) {
+		$scrambled .= pack("C", $shifts[ord($pass_arr[$i])]);
+	}
+
+	return $scrambled;
+}
 
 package main;
 
@@ -541,10 +648,21 @@ sub get_headref ($) {
 	return $r;
 }
 
+my $user_filename_prepend = '';
+sub munge_user_filename {
+	my $name = shift;
+	return File::Spec->file_name_is_absolute($name) ?
+		$name :
+		$user_filename_prepend . $name;
+}
+
 -d $git_tree
 	or mkdir($git_tree,0777)
 	or die "Could not create $git_tree: $!";
-chdir($git_tree);
+if ($git_tree ne '.') {
+	$user_filename_prepend = getwd() . '/';
+	chdir($git_tree);
+}
 
 my $last_branch = "";
 my $orig_branch = "";
@@ -560,16 +678,16 @@ $orig_git_index = $ENV{GIT_INDEX_FILE} if exists $ENV{GIT_INDEX_FILE};
 my %index; # holds filenames of one index per branch
 
 unless (-d $git_dir) {
-	system("git-init");
+	system(qw(git init));
 	die "Cannot init the GIT db at $git_tree: $?\n" if $?;
-	system("git-read-tree");
+	system(qw(git read-tree --empty));
 	die "Cannot init an empty tree: $?\n" if $?;
 
 	$last_branch = $opt_o;
 	$orig_branch = "";
 } else {
-	open(F, "git-symbolic-ref HEAD |") or
-		die "Cannot run git-symbolic-ref: $!\n";
+	open(F, "-|", qw(git symbolic-ref HEAD)) or
+		die "Cannot run git symbolic-ref: $!\n";
 	chomp ($last_branch = <F>);
 	$last_branch = basename($last_branch);
 	close(F);
@@ -578,12 +696,12 @@ unless (-d $git_dir) {
 		$last_branch = "master";
 	}
 	$orig_branch = $last_branch;
-	$tip_at_start = `git-rev-parse --verify HEAD`;
+	$tip_at_start = `git rev-parse --verify HEAD`;
 
 	# Get the last import timestamps
 	my $fmt = '($ref, $author) = (%(refname), %(author));';
-	open(H, "git-for-each-ref --perl --format='$fmt' $remote |") or
-		die "Cannot run git-for-each-ref: $!\n";
+	my @cmd = ('git', 'for-each-ref', '--perl', "--format=$fmt", $remote);
+	open(H, "-|", @cmd) or die "Cannot run git for-each-ref: $!\n";
 	while (defined(my $entry = <H>)) {
 		my ($ref, $author);
 		eval($entry) || die "cannot eval refs list: $@";
@@ -606,9 +724,14 @@ unless (-d $git_dir) {
 -f "$git_dir/cvs-authors" and
   read_author_info("$git_dir/cvs-authors");
 if ($opt_A) {
-	read_author_info($opt_A);
+	read_author_info(munge_user_filename($opt_A));
 	write_author_info("$git_dir/cvs-authors");
 }
+
+# open .git/cvs-revisions, if requested
+open my $revision_map, '>>', "$git_dir/cvs-revisions"
+    or die "Can't open $git_dir/cvs-revisions for appending: $!\n"
+	if defined $opt_R;
 
 
 #
@@ -638,10 +761,10 @@ unless ($opt_P) {
 	    print $cvspsfh $_;
 	}
 	close CVSPS;
-	$? == 0 or die "git-cvsimport: fatal: cvsps reported error\n";
+	$? == 0 or die "git cvsimport: fatal: cvsps reported error\n";
 	close $cvspsfh;
 } else {
-	$cvspsfile = $opt_P;
+	$cvspsfile = munge_user_filename($opt_P);
 }
 
 open(CVS, "<$cvspsfile") or die $!;
@@ -667,33 +790,33 @@ my $state = 0;
 sub update_index (\@\@) {
 	my $old = shift;
 	my $new = shift;
-	open(my $fh, '|-', qw(git-update-index -z --index-info))
-		or die "unable to open git-update-index: $!";
+	open(my $fh, '|-', qw(git update-index -z --index-info))
+		or die "unable to open git update-index: $!";
 	print $fh
 		(map { "0 0000000000000000000000000000000000000000\t$_\0" }
 			@$old),
 		(map { '100' . sprintf('%o', $_->[0]) . " $_->[1]\t$_->[2]\0" }
 			@$new)
-		or die "unable to write to git-update-index: $!";
+		or die "unable to write to git update-index: $!";
 	close $fh
-		or die "unable to write to git-update-index: $!";
-	$? and die "git-update-index reported error: $?";
+		or die "unable to write to git update-index: $!";
+	$? and die "git update-index reported error: $?";
 }
 
 sub write_tree () {
-	open(my $fh, '-|', qw(git-write-tree))
-		or die "unable to open git-write-tree: $!";
+	open(my $fh, '-|', qw(git write-tree))
+		or die "unable to open git write-tree: $!";
 	chomp(my $tree = <$fh>);
 	is_sha1($tree)
 		or die "Cannot get tree id ($tree): $!";
 	close($fh)
-		or die "Error running git-write-tree: $?\n";
+		or die "Error running git write-tree: $?\n";
 	print "Tree ID $tree\n" if $opt_v;
 	return $tree;
 }
 
-my ($patchset,$date,$author_name,$author_email,$branch,$ancestor,$tag,$logmsg);
-my (@old,@new,@skipped,%ignorebranch);
+my ($patchset,$date,$author_name,$author_email,$author_tz,$branch,$ancestor,$tag,$logmsg);
+my (@old,@new,@skipped,%ignorebranch,@commit_revisions);
 
 # commits that cvsps cannot place anywhere...
 $ignorebranch{'#CVSPS_NO_BRANCH'} = 1;
@@ -702,7 +825,7 @@ sub commit {
 	if ($branch eq $opt_o && !$index{branch} &&
 		!get_headref("$remote/$branch")) {
 	    # looks like an initial commit
-	    # use the index primed by git-init
+	    # use the index primed by git init
 	    $ENV{GIT_INDEX_FILE} = "$git_dir/index";
 	    $index{$branch} = "$git_dir/index";
 	} else {
@@ -712,9 +835,9 @@ sub commit {
 		$index{$branch} = tmpnam();
 		$ENV{GIT_INDEX_FILE} = $index{$branch};
 		if ($ancestor) {
-		    system("git-read-tree", "$remote/$ancestor");
+		    system("git", "read-tree", "$remote/$ancestor");
 		} else {
-		    system("git-read-tree", "$remote/$branch");
+		    system("git", "read-tree", "$remote/$branch");
 		}
 		die "read-tree failed: $?\n" if $?;
 	    }
@@ -741,7 +864,11 @@ sub commit {
 		}
 	}
 
-	my $commit_date = strftime("+0000 %Y-%m-%d %H:%M:%S",gmtime($date));
+	set_timezone($author_tz);
+	# $date is in the seconds since epoch format
+	my $tz_offset = get_tz_offset($date);
+	my $commit_date = "$date $tz_offset";
+	set_timezone('UTC');
 	$ENV{GIT_AUTHOR_NAME} = $author_name;
 	$ENV{GIT_AUTHOR_EMAIL} = $author_email;
 	$ENV{GIT_AUTHOR_DATE} = $commit_date;
@@ -749,7 +876,7 @@ sub commit {
 	$ENV{GIT_COMMITTER_EMAIL} = $author_email;
 	$ENV{GIT_COMMITTER_DATE} = $commit_date;
 	my $pid = open2(my $commit_read, my $commit_write,
-		'git-commit-tree', $tree, @commit_args);
+		'git', 'commit-tree', $tree, @commit_args);
 
 	# compatibility with git2cvs
 	substr($logmsg,32767) = "" if length($logmsg) > 32767;
@@ -762,7 +889,7 @@ sub commit {
 	}
 
 	print($commit_write "$logmsg\n") && close($commit_write)
-		or die "Error writing to git-commit-tree: $!\n";
+		or die "Error writing to git commit-tree: $!\n";
 
 	print "Committed patch $patchset ($branch $commit_date)\n" if $opt_v;
 	chomp(my $cid = <$commit_read>);
@@ -771,20 +898,52 @@ sub commit {
 	close($commit_read);
 
 	waitpid($pid,0);
-	die "Error running git-commit-tree: $?\n" if $?;
+	die "Error running git commit-tree: $?\n" if $?;
 
-	system('git-update-ref', "$remote/$branch", $cid) == 0
+	system('git' , 'update-ref', "$remote/$branch", $cid) == 0
 		or die "Cannot write branch $branch for update: $!\n";
+
+	if ($revision_map) {
+		print $revision_map "@$_ $cid\n" for @commit_revisions;
+	}
+	@commit_revisions = ();
 
 	if ($tag) {
 	        my ($xtag) = $tag;
 		$xtag =~ s/\s+\*\*.*$//; # Remove stuff like ** INVALID ** and ** FUNKY **
 		$xtag =~ tr/_/\./ if ( $opt_u );
 		$xtag =~ s/[\/]/$opt_s/g;
-		$xtag =~ s/\[//g;
 
-		system('git-tag', '-f', $xtag, $cid) == 0
-			or die "Cannot create tag $xtag: $!\n";
+		# See refs.c for these rules.
+		# Tag cannot contain bad chars. (See bad_ref_char in refs.c.)
+		$xtag =~ s/[ ~\^:\\\*\?\[]//g;
+		# Other bad strings for tags:
+		# (See check_refname_component in refs.c.)
+		1 while $xtag =~ s/
+			(?: \.\.        # Tag cannot contain '..'.
+			|   \@\{        # Tag cannot contain '@{'.
+			| ^ -           # Tag cannot begin with '-'.
+			|   \.lock $    # Tag cannot end with '.lock'.
+			| ^ \.          # Tag cannot begin...
+			|   \. $        # ...or end with '.'
+			)//xg;
+		# Tag cannot be empty.
+		if ($xtag eq '') {
+			warn("warning: ignoring tag '$tag'",
+			" with invalid tagname\n");
+			return;
+		}
+
+		if (system('git' , 'tag', '-f', $xtag, $cid) != 0) {
+			# We did our best to sanitize the tag, but still failed
+			# for whatever reason. Bail out, and give the user
+			# enough information to understand if/how we should
+			# improve the translation in the future.
+			if ($tag ne $xtag) {
+				print "Translated '$tag' tag to '$xtag'\n";
+			}
+			die "Cannot create tag $xtag: $!\n";
+		}
 
 		print "Created tag '$xtag' on '$branch'\n" if $opt_v;
 	}
@@ -810,12 +969,14 @@ while (<CVS>) {
 		}
 		$state=3;
 	} elsif ($state == 3 and s/^Author:\s+//) {
+		$author_tz = "UTC";
 		s/\s+$//;
 		if (/^(.*?)\s+<(.*)>/) {
 		    ($author_name, $author_email) = ($1, $2);
 		} elsif ($conv_author_name{$_}) {
 			$author_name = $conv_author_name{$_};
 			$author_email = $conv_author_email{$_};
+			$author_tz = $conv_author_tz{$_} if ($conv_author_tz{$_});
 		} else {
 		    $author_name = $author_email = $_;
 		}
@@ -910,6 +1071,7 @@ while (<CVS>) {
 		    push(@skipped, $fn);
 		    next;
 		}
+		push @commit_revisions, [$fn, $rev];
 		print "Fetching $fn   v $rev\n" if $opt_v;
 		my ($tmpname, $size) = $cvs->file($fn,$rev);
 		if ($size == -1) {
@@ -920,7 +1082,7 @@ while (<CVS>) {
 			my $pid = open(my $F, '-|');
 			die $! unless defined $pid;
 			if (!$pid) {
-			    exec("git-hash-object", "-w", $tmpname)
+			    exec("git", "hash-object", "-w", $tmpname)
 				or die "Cannot create object: $!\n";
 			}
 			my $sha = <$F>;
@@ -932,7 +1094,9 @@ while (<CVS>) {
 		unlink($tmpname);
 	} elsif ($state == 9 and /^\s+(.+?):\d+(?:\.\d+)+->(\d+(?:\.\d+)+)\(DEAD\)\s*$/) {
 		my $fn = $1;
+		my $rev = $2;
 		$fn =~ s#^/+##;
+		push @commit_revisions, [$fn, $rev];
 		push(@old,$fn);
 		print "Delete $fn\n" if $opt_v;
 	} elsif ($state == 9 and /^\s*$/) {
@@ -944,7 +1108,7 @@ while (<CVS>) {
 		}
 		commit();
 		if (($commitcount & 1023) == 0) {
-			system("git repack -a -d");
+			system(qw(git repack -a -d));
 		}
 		$state = 1;
 	} elsif ($state == 11 and /^-+$/) {
@@ -964,11 +1128,11 @@ unless ($opt_P) {
 # The heuristic of repacking every 1024 commits can leave a
 # lot of unpacked data.  If there is more than 1MB worth of
 # not-packed objects, repack once more.
-my $line = `git-count-objects`;
+my $line = `git count-objects`;
 if ($line =~ /^(\d+) objects, (\d+) kilobytes$/) {
   my ($n_objects, $kb) = ($1, $2);
   1024 < $kb
-    and system("git repack -a -d");
+    and system(qw(git repack -a -d));
 }
 
 foreach my $git_index (values %index) {
@@ -989,28 +1153,28 @@ if ($orig_branch) {
 	if ($opt_i) {
 		exit 0;
 	}
-	my $tip_at_end = `git-rev-parse --verify HEAD`;
+	my $tip_at_end = `git rev-parse --verify HEAD`;
 	if ($tip_at_start ne $tip_at_end) {
 		for ($tip_at_start, $tip_at_end) { chomp; }
 		print "Fetched into the current branch.\n" if $opt_v;
-		system(qw(git-read-tree -u -m),
+		system(qw(git read-tree -u -m),
 		       $tip_at_start, $tip_at_end);
 		die "Fast-forward update failed: $?\n" if $?;
 	}
 	else {
-		system(qw(git-merge cvsimport HEAD), "$remote/$opt_o");
+		system(qw(git merge -m cvsimport), "$remote/$opt_o");
 		die "Could not merge $opt_o into the current branch.\n" if $?;
 	}
 } else {
 	$orig_branch = "master";
 	print "DONE; creating $orig_branch branch\n" if $opt_v;
-	system("git-update-ref", "refs/heads/master", "$remote/$opt_o")
+	system("git", "update-ref", "refs/heads/master", "$remote/$opt_o")
 		unless defined get_headref('refs/heads/master');
-	system("git-symbolic-ref", "$remote/HEAD", "$remote/$opt_o")
+	system("git", "symbolic-ref", "$remote/HEAD", "$remote/$opt_o")
 		if ($opt_r && $opt_o ne 'HEAD');
-	system('git-update-ref', 'HEAD', "$orig_branch");
+	system('git', 'update-ref', 'HEAD', "$orig_branch");
 	unless ($opt_i) {
-		system('git checkout -f');
+		system(qw(git checkout -f));
 		die "checkout failed: $?\n" if $?;
 	}
 }

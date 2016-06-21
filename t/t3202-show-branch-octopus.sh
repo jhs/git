@@ -19,7 +19,7 @@ test_expect_success 'setup' '
 		> file$i &&
 		git add file$i &&
 		test_tick &&
-		git commit -m branch$i || break
+		git commit -m branch$i || return 1
 	done
 
 '
@@ -54,6 +54,14 @@ test_expect_success 'show-branch with more than 8 branches' '
 	git show-branch $(for i in $numbers; do echo branch$i; done) > out &&
 	test_cmp expect out
 
+'
+
+test_expect_success 'show-branch with showbranch.default' '
+	for i in $numbers; do
+		git config --add showbranch.default branch$i
+	done &&
+	git show-branch >out &&
+	test_cmp expect out
 '
 
 test_done

@@ -1,33 +1,29 @@
 #include "cache.h"
 
-static const char *alias_key;
-static char *alias_val;
-
-static int alias_lookup_cb(const char *k, const char *v, void *cb)
-{
-	if (!prefixcmp(k, "alias.") && !strcmp(k+6, alias_key)) {
-		if (!v)
-			return config_error_nonbool(k);
-		alias_val = xstrdup(v);
-		return 0;
-	}
-	return 0;
-}
-
 char *alias_lookup(const char *alias)
 {
-	alias_key = alias;
-	alias_val = NULL;
-	git_config(alias_lookup_cb, NULL);
-	return alias_val;
+	char *v = NULL;
+	struct strbuf key = STRBUF_INIT;
+	strbuf_addf(&key, "alias.%s", alias);
+	if (git_config_key_is_valid(key.buf))
+		git_config_get_string(key.buf, &v);
+	strbuf_release(&key);
+	return v;
 }
+
+#define SPLIT_CMDLINE_BAD_ENDING 1
+#define SPLIT_CMDLINE_UNCLOSED_QUOTE 2
+static const char *split_cmdline_errors[] = {
+	"cmdline ends with \\",
+	"unclosed quote"
+};
 
 int split_cmdline(char *cmdline, const char ***argv)
 {
 	int src, dst, count = 0, size = 16;
 	char quoted = 0;
 
-	*argv = xmalloc(sizeof(char*) * size);
+	ALLOC_ARRAY(*argv, size);
 
 	/* split alias_string */
 	(*argv)[count++] = cmdline;
@@ -38,10 +34,7 @@ int split_cmdline(char *cmdline, const char ***argv)
 			while (cmdline[++src]
 					&& isspace(cmdline[src]))
 				; /* skip */
-			if (count >= size) {
-				size += 16;
-				*argv = xrealloc(*argv, sizeof(char*) * size);
-			}
+			ALLOC_GROW(*argv, count + 1, size);
 			(*argv)[count++] = cmdline + dst;
 		} else if (!quoted && (c == '\'' || c == '"')) {
 			quoted = c;
@@ -56,7 +49,7 @@ int split_cmdline(char *cmdline, const char ***argv)
 				if (!c) {
 					free(*argv);
 					*argv = NULL;
-					return error("cmdline ends with \\");
+					return -SPLIT_CMDLINE_BAD_ENDING;
 				}
 			}
 			cmdline[dst++] = c;
@@ -69,9 +62,16 @@ int split_cmdline(char *cmdline, const char ***argv)
 	if (quoted) {
 		free(*argv);
 		*argv = NULL;
-		return error("unclosed quote");
+		return -SPLIT_CMDLINE_UNCLOSED_QUOTE;
 	}
+
+	ALLOC_GROW(*argv, count + 1, size);
+	(*argv)[count] = NULL;
 
 	return count;
 }
 
+const char *split_cmdline_strerror(int split_cmdline_errno)
+{
+	return split_cmdline_errors[-split_cmdline_errno - 1];
+}

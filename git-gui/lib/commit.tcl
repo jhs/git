@@ -115,6 +115,23 @@ proc create_new_commit {} {
 	rescan ui_ready
 }
 
+proc setup_commit_encoding {msg_wt {quiet 0}} {
+	global repo_config
+
+	if {[catch {set enc $repo_config(i18n.commitencoding)}]} {
+		set enc utf-8
+	}
+	set use_enc [tcl_encoding $enc]
+	if {$use_enc ne {}} {
+		fconfigure $msg_wt -encoding $use_enc
+	} else {
+		if {!$quiet} {
+			error_popup [mc "warning: Tcl does not support encoding '%s'." $enc]
+		}
+		fconfigure $msg_wt -encoding utf-8
+	}
+}
+
 proc commit_tree {} {
 	global HEAD commit_type file_states ui_comm repo_config
 	global pch_error
@@ -144,11 +161,12 @@ The rescan will be automatically started now.
 	#
 	set files_ready 0
 	foreach path [array names file_states] {
-		switch -glob -- [lindex $file_states($path) 0] {
+		set s $file_states($path)
+		switch -glob -- [lindex $s 0] {
 		_? {continue}
 		A? -
 		D? -
-		T_ -
+		T? -
 		M? {set files_ready 1}
 		_U -
 		U? {
@@ -200,16 +218,7 @@ A good commit message has the following format:
 	set msg_p [gitdir GITGUI_EDITMSG]
 	set msg_wt [open $msg_p w]
 	fconfigure $msg_wt -translation lf
-	if {[catch {set enc $repo_config(i18n.commitencoding)}]} {
-		set enc utf-8
-	}
-	set use_enc [tcl_encoding $enc]
-	if {$use_enc ne {}} {
-		fconfigure $msg_wt -encoding $use_enc
-	} else {
-		error_popup [mc "warning: Tcl does not support encoding '%s'." $enc]
-		fconfigure $msg_wt -encoding utf-8
-	}
+	setup_commit_encoding $msg_wt
 	puts $msg_wt $msg
 	close $msg_wt
 
@@ -251,7 +260,24 @@ proc commit_prehook_wait {fd_ph curHEAD msg_p} {
 }
 
 proc commit_commitmsg {curHEAD msg_p} {
+	global is_detached repo_config
 	global pch_error
+
+	if {$is_detached
+	    && ![file exists [gitdir rebase-merge head-name]]
+	    && 	[is_config_true gui.warndetachedcommit]} {
+		set msg [mc "You are about to commit on a detached head.\
+This is a potentially dangerous thing to do because if you switch\
+to another branch you will lose your changes and it can be difficult\
+to retrieve them later from the reflog. You should probably cancel this\
+commit and create a new branch to continue.\n\
+\n\
+Do you really want to proceed with your Commit?"]
+		if {[ask_popup $msg] ne yes} {
+			unlock_index
+			return
+		}
+	}
 
 	# -- Run the commit-msg hook.
 	#
@@ -362,6 +388,7 @@ A rescan will be automatically started now.
 		append reflogm " ($commit_type)"
 	}
 	set msg_fd [open $msg_p r]
+	setup_commit_encoding $msg_fd 1
 	gets $msg_fd subject
 	close $msg_fd
 	append reflogm {: } $subject
@@ -382,6 +409,7 @@ A rescan will be automatically started now.
 	catch {file delete [gitdir MERGE_MSG]}
 	catch {file delete [gitdir SQUASH_MSG]}
 	catch {file delete [gitdir GITGUI_MSG]}
+	catch {file delete [gitdir CHERRY_PICK_HEAD]}
 
 	# -- Let rerere do its thing.
 	#
@@ -398,8 +426,8 @@ A rescan will be automatically started now.
 	#
 	set fd_ph [githook_read post-commit]
 	if {$fd_ph ne {}} {
-		upvar #0 pch_error$cmt_id pc_err
-		set pc_err {}
+		global pch_error
+		set pch_error {}
 		fconfigure $fd_ph -blocking 0 -translation binary -eofchar {}
 		fileevent $fd_ph readable \
 			[list commit_postcommit_wait $fd_ph $cmt_id]
@@ -443,7 +471,11 @@ A rescan will be automatically started now.
 		}
 		AM -
 		AD -
+		AT -
+		TM -
+		TD -
 		MM -
+		MT -
 		MD {
 			set file_states($path) [list \
 				_[string index $m 1] \
@@ -461,7 +493,7 @@ A rescan will be automatically started now.
 }
 
 proc commit_postcommit_wait {fd_ph cmt_id} {
-	upvar #0 pch_error$cmt_id pch_error
+	global pch_error
 
 	append pch_error [read $fd_ph]
 	fconfigure $fd_ph -blocking 1

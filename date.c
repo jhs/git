@@ -9,7 +9,7 @@
 /*
  * This is like mktime, but without normalization of tm_wday and tm_yday.
  */
-time_t tm_to_time_t(const struct tm *tm)
+static time_t tm_to_time_t(const struct tm *tm)
 {
 	static const int mdays[] = {
 	    0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
@@ -24,6 +24,8 @@ time_t tm_to_time_t(const struct tm *tm)
 		return -1;
 	if (month < 2 || (year + 2) % 4)
 		day--;
+	if (tm->tm_hour < 0 || tm->tm_min < 0 || tm->tm_sec < 0)
+		return -1;
 	return (year * 365 + (year + 1) / 4 + mdays[month] + day) * 24*60*60UL +
 		tm->tm_hour * 60*60 + tm->tm_min * 60 + tm->tm_sec;
 }
@@ -84,89 +86,156 @@ static int local_tzoffset(unsigned long time)
 	return offset * eastwest;
 }
 
-const char *show_date(unsigned long time, int tz, enum date_mode mode)
+void show_date_relative(unsigned long time, int tz,
+			       const struct timeval *now,
+			       struct strbuf *timebuf)
+{
+	unsigned long diff;
+	if (now->tv_sec < time) {
+		strbuf_addstr(timebuf, _("in the future"));
+		return;
+	}
+	diff = now->tv_sec - time;
+	if (diff < 90) {
+		strbuf_addf(timebuf,
+			 Q_("%lu second ago", "%lu seconds ago", diff), diff);
+		return;
+	}
+	/* Turn it into minutes */
+	diff = (diff + 30) / 60;
+	if (diff < 90) {
+		strbuf_addf(timebuf,
+			 Q_("%lu minute ago", "%lu minutes ago", diff), diff);
+		return;
+	}
+	/* Turn it into hours */
+	diff = (diff + 30) / 60;
+	if (diff < 36) {
+		strbuf_addf(timebuf,
+			 Q_("%lu hour ago", "%lu hours ago", diff), diff);
+		return;
+	}
+	/* We deal with number of days from here on */
+	diff = (diff + 12) / 24;
+	if (diff < 14) {
+		strbuf_addf(timebuf,
+			 Q_("%lu day ago", "%lu days ago", diff), diff);
+		return;
+	}
+	/* Say weeks for the past 10 weeks or so */
+	if (diff < 70) {
+		strbuf_addf(timebuf,
+			 Q_("%lu week ago", "%lu weeks ago", (diff + 3) / 7),
+			 (diff + 3) / 7);
+		return;
+	}
+	/* Say months for the past 12 months or so */
+	if (diff < 365) {
+		strbuf_addf(timebuf,
+			 Q_("%lu month ago", "%lu months ago", (diff + 15) / 30),
+			 (diff + 15) / 30);
+		return;
+	}
+	/* Give years and months for 5 years or so */
+	if (diff < 1825) {
+		unsigned long totalmonths = (diff * 12 * 2 + 365) / (365 * 2);
+		unsigned long years = totalmonths / 12;
+		unsigned long months = totalmonths % 12;
+		if (months) {
+			struct strbuf sb = STRBUF_INIT;
+			strbuf_addf(&sb, Q_("%lu year", "%lu years", years), years);
+			strbuf_addf(timebuf,
+				 /* TRANSLATORS: "%s" is "<n> years" */
+				 Q_("%s, %lu month ago", "%s, %lu months ago", months),
+				 sb.buf, months);
+			strbuf_release(&sb);
+		} else
+			strbuf_addf(timebuf,
+				 Q_("%lu year ago", "%lu years ago", years), years);
+		return;
+	}
+	/* Otherwise, just years. Centuries is probably overkill. */
+	strbuf_addf(timebuf,
+		 Q_("%lu year ago", "%lu years ago", (diff + 183) / 365),
+		 (diff + 183) / 365);
+}
+
+struct date_mode *date_mode_from_type(enum date_mode_type type)
+{
+	static struct date_mode mode;
+	if (type == DATE_STRFTIME)
+		die("BUG: cannot create anonymous strftime date_mode struct");
+	mode.type = type;
+	mode.local = 0;
+	return &mode;
+}
+
+const char *show_date(unsigned long time, int tz, const struct date_mode *mode)
 {
 	struct tm *tm;
-	static char timebuf[200];
+	static struct strbuf timebuf = STRBUF_INIT;
 
-	if (mode == DATE_RAW) {
-		snprintf(timebuf, sizeof(timebuf), "%lu %+05d", time, tz);
-		return timebuf;
-	}
-
-	if (mode == DATE_RELATIVE) {
-		unsigned long diff;
-		struct timeval now;
-		gettimeofday(&now, NULL);
-		if (now.tv_sec < time)
-			return "in the future";
-		diff = now.tv_sec - time;
-		if (diff < 90) {
-			snprintf(timebuf, sizeof(timebuf), "%lu seconds ago", diff);
-			return timebuf;
-		}
-		/* Turn it into minutes */
-		diff = (diff + 30) / 60;
-		if (diff < 90) {
-			snprintf(timebuf, sizeof(timebuf), "%lu minutes ago", diff);
-			return timebuf;
-		}
-		/* Turn it into hours */
-		diff = (diff + 30) / 60;
-		if (diff < 36) {
-			snprintf(timebuf, sizeof(timebuf), "%lu hours ago", diff);
-			return timebuf;
-		}
-		/* We deal with number of days from here on */
-		diff = (diff + 12) / 24;
-		if (diff < 14) {
-			snprintf(timebuf, sizeof(timebuf), "%lu days ago", diff);
-			return timebuf;
-		}
-		/* Say weeks for the past 10 weeks or so */
-		if (diff < 70) {
-			snprintf(timebuf, sizeof(timebuf), "%lu weeks ago", (diff + 3) / 7);
-			return timebuf;
-		}
-		/* Say months for the past 12 months or so */
-		if (diff < 360) {
-			snprintf(timebuf, sizeof(timebuf), "%lu months ago", (diff + 15) / 30);
-			return timebuf;
-		}
-		/* Else fall back on absolute format.. */
-	}
-
-	if (mode == DATE_LOCAL)
+	if (mode->local)
 		tz = local_tzoffset(time);
 
+	if (mode->type == DATE_RAW) {
+		strbuf_reset(&timebuf);
+		strbuf_addf(&timebuf, "%lu %+05d", time, tz);
+		return timebuf.buf;
+	}
+
+	if (mode->type == DATE_RELATIVE) {
+		struct timeval now;
+
+		strbuf_reset(&timebuf);
+		gettimeofday(&now, NULL);
+		show_date_relative(time, tz, &now, &timebuf);
+		return timebuf.buf;
+	}
+
 	tm = time_to_tm(time, tz);
-	if (!tm)
-		return NULL;
-	if (mode == DATE_SHORT)
-		sprintf(timebuf, "%04d-%02d-%02d", tm->tm_year + 1900,
+	if (!tm) {
+		tm = time_to_tm(0, 0);
+		tz = 0;
+	}
+
+	strbuf_reset(&timebuf);
+	if (mode->type == DATE_SHORT)
+		strbuf_addf(&timebuf, "%04d-%02d-%02d", tm->tm_year + 1900,
 				tm->tm_mon + 1, tm->tm_mday);
-	else if (mode == DATE_ISO8601)
-		sprintf(timebuf, "%04d-%02d-%02d %02d:%02d:%02d %+05d",
+	else if (mode->type == DATE_ISO8601)
+		strbuf_addf(&timebuf, "%04d-%02d-%02d %02d:%02d:%02d %+05d",
 				tm->tm_year + 1900,
 				tm->tm_mon + 1,
 				tm->tm_mday,
 				tm->tm_hour, tm->tm_min, tm->tm_sec,
 				tz);
-	else if (mode == DATE_RFC2822)
-		sprintf(timebuf, "%.3s, %d %.3s %d %02d:%02d:%02d %+05d",
+	else if (mode->type == DATE_ISO8601_STRICT) {
+		char sign = (tz >= 0) ? '+' : '-';
+		tz = abs(tz);
+		strbuf_addf(&timebuf, "%04d-%02d-%02dT%02d:%02d:%02d%c%02d:%02d",
+				tm->tm_year + 1900,
+				tm->tm_mon + 1,
+				tm->tm_mday,
+				tm->tm_hour, tm->tm_min, tm->tm_sec,
+				sign, tz / 100, tz % 100);
+	} else if (mode->type == DATE_RFC2822)
+		strbuf_addf(&timebuf, "%.3s, %d %.3s %d %02d:%02d:%02d %+05d",
 			weekday_names[tm->tm_wday], tm->tm_mday,
 			month_names[tm->tm_mon], tm->tm_year + 1900,
 			tm->tm_hour, tm->tm_min, tm->tm_sec, tz);
+	else if (mode->type == DATE_STRFTIME)
+		strbuf_addftime(&timebuf, mode->strftime_fmt, tm);
 	else
-		sprintf(timebuf, "%.3s %.3s %d %02d:%02d:%02d %d%c%+05d",
+		strbuf_addf(&timebuf, "%.3s %.3s %d %02d:%02d:%02d %d%c%+05d",
 				weekday_names[tm->tm_wday],
 				month_names[tm->tm_mon],
 				tm->tm_mday,
 				tm->tm_hour, tm->tm_min, tm->tm_sec,
 				tm->tm_year + 1900,
-				(mode == DATE_LOCAL) ? 0 : ' ',
+				mode->local ? 0 : ' ',
 				tz);
-	return timebuf;
+	return timebuf.buf;
 }
 
 /*
@@ -201,6 +270,7 @@ static const struct {
 
 	{ "GMT",    0, 0, },	/* Greenwich Mean */
 	{ "UTC",    0, 0, },	/* Universal (Coordinated) */
+	{ "Z",      0, 0, },    /* Zulu, alias for UTC */
 
 	{ "WET",    0, 0, },	/* Western European */
 	{ "BST",    0, 1, },	/* British Summer */
@@ -277,7 +347,7 @@ static int match_alpha(const char *date, struct tm *tm, int *offset)
 
 	for (i = 0; i < ARRAY_SIZE(timezone_names); i++) {
 		int match = match_string(date, timezone_names[i].name);
-		if (match >= 3) {
+		if (match >= 3 || match == strlen(timezone_names[i].name)) {
 			int off = timezone_names[i].offset;
 
 			/* This is bogus, but we like summer */
@@ -336,7 +406,7 @@ static int is_date(int year, int month, int day, struct tm *now_tm, time_t now, 
 		 * sense to specify timestamp way into the future.  Make
 		 * sure it is not later than ten days from now...
 		 */
-		if (now + 10*24*3600 < specified)
+		if ((specified != -1) && (now + 10*24*3600 < specified))
 			return 0;
 		tm->tm_mon = r->tm_mon;
 		tm->tm_mday = r->tm_mday;
@@ -347,9 +417,9 @@ static int is_date(int year, int month, int day, struct tm *now_tm, time_t now, 
 	return 0;
 }
 
-static int match_multi_number(unsigned long num, char c, const char *date, char *end, struct tm *tm)
+static int match_multi_number(unsigned long num, char c, const char *date,
+			      char *end, struct tm *tm, time_t now)
 {
-	time_t now;
 	struct tm now_tm;
 	struct tm *refuse_future;
 	long num2, num3;
@@ -375,17 +445,18 @@ static int match_multi_number(unsigned long num, char c, const char *date, char 
 	case '-':
 	case '/':
 	case '.':
-		now = time(NULL);
+		if (!now)
+			now = time(NULL);
 		refuse_future = NULL;
 		if (gmtime_r(&now, &now_tm))
 			refuse_future = &now_tm;
 
 		if (num > 70) {
 			/* yyyy-mm-dd? */
-			if (is_date(num, num2, num3, refuse_future, now, tm))
+			if (is_date(num, num2, num3, NULL, now, tm))
 				break;
 			/* yyyy-dd-mm? */
-			if (is_date(num, num3, num2, refuse_future, now, tm))
+			if (is_date(num, num3, num2, NULL, now, tm))
 				break;
 		}
 		/* Our eastern European friends say dd.mm.yy[yy]
@@ -407,13 +478,19 @@ static int match_multi_number(unsigned long num, char c, const char *date, char 
 	return end - date;
 }
 
-/* Have we filled in any part of the time/date yet? */
+/*
+ * Have we filled in any part of the time/date yet?
+ * We just do a binary 'and' to see if the sign bit
+ * is set in all the values.
+ */
 static inline int nodate(struct tm *tm)
 {
-	return tm->tm_year < 0 &&
-		tm->tm_mon < 0 &&
-		tm->tm_mday < 0 &&
-		!(tm->tm_hour | tm->tm_min | tm->tm_sec);
+	return (tm->tm_year &
+		tm->tm_mon &
+		tm->tm_mday &
+		tm->tm_hour &
+		tm->tm_min &
+		tm->tm_sec) < 0;
 }
 
 /*
@@ -449,7 +526,7 @@ static int match_digit(const char *date, struct tm *tm, int *offset, int *tm_gmt
 	case '/':
 	case '-':
 		if (isdigit(end[1])) {
-			int match = match_multi_number(num, *end, date, end, tm);
+			int match = match_multi_number(num, *end, date, end, tm, 0);
 			if (match)
 				return match;
 		}
@@ -507,11 +584,8 @@ static int match_digit(const char *date, struct tm *tm, int *offset, int *tm_gmt
 		}
 	}
 
-	if (num > 0 && num < 32) {
-		tm->tm_mday = num;
-	} else if (num > 0 && num < 13) {
+	if (num > 0 && num < 13 && tm->tm_mon < 0)
 		tm->tm_mon = num-1;
-	}
 
 	return n;
 }
@@ -519,29 +593,41 @@ static int match_digit(const char *date, struct tm *tm, int *offset, int *tm_gmt
 static int match_tz(const char *date, int *offp)
 {
 	char *end;
-	int offset = strtoul(date+1, &end, 10);
-	int min, hour;
-	int n = end - date - 1;
+	int hour = strtoul(date + 1, &end, 10);
+	int n = end - (date + 1);
+	int min = 0;
 
-	min = offset % 100;
-	hour = offset / 100;
+	if (n == 4) {
+		/* hhmm */
+		min = hour % 100;
+		hour = hour / 100;
+	} else if (n != 2) {
+		min = 99; /* random crap */
+	} else if (*end == ':') {
+		/* hh:mm? */
+		min = strtoul(end + 1, &end, 10);
+		if (end - (date + 1) != 5)
+			min = 99; /* random crap */
+	} /* otherwise we parsed "hh" */
 
 	/*
-	 * Don't accept any random crap.. At least 3 digits, and
-	 * a valid minute. We might want to check that the minutes
-	 * are divisible by 30 or something too.
+	 * Don't accept any random crap. Even though some places have
+	 * offset larger than 12 hours (e.g. Pacific/Kiritimati is at
+	 * UTC+14), there is something wrong if hour part is much
+	 * larger than that. We might also want to check that the
+	 * minutes are divisible by 15 or something too. (Offset of
+	 * Kathmandu, Nepal is UTC+5:45)
 	 */
-	if (min < 60 && n > 2) {
-		offset = hour*60+min;
+	if (min < 60 && hour < 24) {
+		int offset = hour * 60 + min;
 		if (*date == '-')
 			offset = -offset;
-
 		*offp = offset;
 	}
 	return end - date;
 }
 
-static int date_string(unsigned long date, int offset, char *buf, int len)
+static void date_string(unsigned long date, int offset, struct strbuf *buf)
 {
 	int sign = '+';
 
@@ -549,25 +635,64 @@ static int date_string(unsigned long date, int offset, char *buf, int len)
 		offset = -offset;
 		sign = '-';
 	}
-	return snprintf(buf, len, "%lu %c%02d%02d", date, sign, offset / 60, offset % 60);
+	strbuf_addf(buf, "%lu %c%02d%02d", date, sign, offset / 60, offset % 60);
+}
+
+/*
+ * Parse a string like "0 +0000" as ancient timestamp near epoch, but
+ * only when it appears not as part of any other string.
+ */
+static int match_object_header_date(const char *date, unsigned long *timestamp, int *offset)
+{
+	char *end;
+	unsigned long stamp;
+	int ofs;
+
+	if (*date < '0' || '9' < *date)
+		return -1;
+	stamp = strtoul(date, &end, 10);
+	if (*end != ' ' || stamp == ULONG_MAX || (end[1] != '+' && end[1] != '-'))
+		return -1;
+	date = end + 2;
+	ofs = strtol(date, &end, 10);
+	if ((*end != '\0' && (*end != '\n')) || end != date + 4)
+		return -1;
+	ofs = (ofs / 100) * 60 + (ofs % 100);
+	if (date[-1] == '-')
+		ofs = -ofs;
+	*timestamp = stamp;
+	*offset = ofs;
+	return 0;
 }
 
 /* Gr. strptime is crap for this; it doesn't have a way to require RFC2822
    (i.e. English) day/month names, and it doesn't work correctly with %z. */
-int parse_date(const char *date, char *result, int maxlen)
+int parse_date_basic(const char *date, unsigned long *timestamp, int *offset)
 {
 	struct tm tm;
-	int offset, tm_gmt;
-	time_t then;
+	int tm_gmt;
+	unsigned long dummy_timestamp;
+	int dummy_offset;
+
+	if (!timestamp)
+		timestamp = &dummy_timestamp;
+	if (!offset)
+		offset = &dummy_offset;
 
 	memset(&tm, 0, sizeof(tm));
 	tm.tm_year = -1;
 	tm.tm_mon = -1;
 	tm.tm_mday = -1;
 	tm.tm_isdst = -1;
-	offset = -1;
+	tm.tm_hour = -1;
+	tm.tm_min = -1;
+	tm.tm_sec = -1;
+	*offset = -1;
 	tm_gmt = 0;
 
+	if (*date == '@' &&
+	    !match_object_header_date(date + 1, timestamp, offset))
+		return 0; /* success */
 	for (;;) {
 		int match = 0;
 		unsigned char c = *date;
@@ -577,11 +702,11 @@ int parse_date(const char *date, char *result, int maxlen)
 			break;
 
 		if (isalpha(c))
-			match = match_alpha(date, &tm, &offset);
+			match = match_alpha(date, &tm, offset);
 		else if (isdigit(c))
-			match = match_digit(date, &tm, &offset, &tm_gmt);
+			match = match_digit(date, &tm, offset, &tm_gmt);
 		else if ((c == '-' || c == '+') && isdigit(date[1]))
-			match = match_tz(date, &offset);
+			match = match_tz(date, offset);
 
 		if (!match) {
 			/* BAD CRAP */
@@ -591,42 +716,109 @@ int parse_date(const char *date, char *result, int maxlen)
 		date += match;
 	}
 
-	/* mktime uses local timezone */
-	then = tm_to_time_t(&tm);
-	if (offset == -1)
-		offset = (then - mktime(&tm)) / 60;
-
-	if (then == -1)
+	/* do not use mktime(), which uses local timezone, here */
+	*timestamp = tm_to_time_t(&tm);
+	if (*timestamp == -1)
 		return -1;
 
+	if (*offset == -1) {
+		time_t temp_time;
+
+		/* gmtime_r() in match_digit() may have clobbered it */
+		tm.tm_isdst = -1;
+		temp_time = mktime(&tm);
+		if ((time_t)*timestamp > temp_time) {
+			*offset = ((time_t)*timestamp - temp_time) / 60;
+		} else {
+			*offset = -(int)((temp_time - (time_t)*timestamp) / 60);
+		}
+	}
+
 	if (!tm_gmt)
-		then -= offset * 60;
-	return date_string(then, offset, result, maxlen);
+		*timestamp -= *offset * 60;
+	return 0; /* success */
 }
 
-enum date_mode parse_date_format(const char *format)
+int parse_expiry_date(const char *date, unsigned long *timestamp)
 {
-	if (!strcmp(format, "relative"))
-		return DATE_RELATIVE;
-	else if (!strcmp(format, "iso8601") ||
-		 !strcmp(format, "iso"))
-		return DATE_ISO8601;
-	else if (!strcmp(format, "rfc2822") ||
-		 !strcmp(format, "rfc"))
-		return DATE_RFC2822;
-	else if (!strcmp(format, "short"))
-		return DATE_SHORT;
-	else if (!strcmp(format, "local"))
-		return DATE_LOCAL;
-	else if (!strcmp(format, "default"))
-		return DATE_NORMAL;
-	else if (!strcmp(format, "raw"))
-		return DATE_RAW;
+	int errors = 0;
+
+	if (!strcmp(date, "never") || !strcmp(date, "false"))
+		*timestamp = 0;
+	else if (!strcmp(date, "all") || !strcmp(date, "now"))
+		/*
+		 * We take over "now" here, which usually translates
+		 * to the current timestamp.  This is because the user
+		 * really means to expire everything she has done in
+		 * the past, and by definition reflogs are the record
+		 * of the past, and there is nothing from the future
+		 * to be kept.
+		 */
+		*timestamp = ULONG_MAX;
 	else
+		*timestamp = approxidate_careful(date, &errors);
+
+	return errors;
+}
+
+int parse_date(const char *date, struct strbuf *result)
+{
+	unsigned long timestamp;
+	int offset;
+	if (parse_date_basic(date, &timestamp, &offset))
+		return -1;
+	date_string(timestamp, offset, result);
+	return 0;
+}
+
+static enum date_mode_type parse_date_type(const char *format, const char **end)
+{
+	if (skip_prefix(format, "relative", end))
+		return DATE_RELATIVE;
+	if (skip_prefix(format, "iso8601-strict", end) ||
+	    skip_prefix(format, "iso-strict", end))
+		return DATE_ISO8601_STRICT;
+	if (skip_prefix(format, "iso8601", end) ||
+	    skip_prefix(format, "iso", end))
+		return DATE_ISO8601;
+	if (skip_prefix(format, "rfc2822", end) ||
+	    skip_prefix(format, "rfc", end))
+		return DATE_RFC2822;
+	if (skip_prefix(format, "short", end))
+		return DATE_SHORT;
+	if (skip_prefix(format, "default", end))
+		return DATE_NORMAL;
+	if (skip_prefix(format, "raw", end))
+		return DATE_RAW;
+	if (skip_prefix(format, "format", end))
+		return DATE_STRFTIME;
+
+	die("unknown date format %s", format);
+}
+
+void parse_date_format(const char *format, struct date_mode *mode)
+{
+	const char *p;
+
+	/* historical alias */
+	if (!strcmp(format, "local"))
+		format = "default-local";
+
+	mode->type = parse_date_type(format, &p);
+	mode->local = 0;
+
+	if (skip_prefix(p, "-local", &p))
+		mode->local = 1;
+
+	if (mode->type == DATE_STRFTIME) {
+		if (!skip_prefix(p, ":", &p))
+			die("date format missing colon separator: %s", format);
+		mode->strftime_fmt = xstrdup(p);
+	} else if (*p)
 		die("unknown date format %s", format);
 }
 
-void datestamp(char *buf, int bufsize)
+void datestamp(struct strbuf *out)
 {
 	time_t now;
 	int offset;
@@ -636,45 +828,67 @@ void datestamp(char *buf, int bufsize)
 	offset = tm_to_time_t(localtime(&now)) - now;
 	offset /= 60;
 
-	date_string(now, offset, buf, bufsize);
+	date_string(now, offset, out);
 }
 
-static void update_tm(struct tm *tm, unsigned long sec)
+/*
+ * Relative time update (eg "2 days ago").  If we haven't set the time
+ * yet, we need to set it from current time.
+ */
+static unsigned long update_tm(struct tm *tm, struct tm *now, unsigned long sec)
 {
-	time_t n = mktime(tm) - sec;
+	time_t n;
+
+	if (tm->tm_mday < 0)
+		tm->tm_mday = now->tm_mday;
+	if (tm->tm_mon < 0)
+		tm->tm_mon = now->tm_mon;
+	if (tm->tm_year < 0) {
+		tm->tm_year = now->tm_year;
+		if (tm->tm_mon > now->tm_mon)
+			tm->tm_year--;
+	}
+
+	n = mktime(tm) - sec;
 	localtime_r(&n, tm);
+	return n;
 }
 
-static void date_yesterday(struct tm *tm, int *num)
+static void date_now(struct tm *tm, struct tm *now, int *num)
 {
-	update_tm(tm, 24*60*60);
+	update_tm(tm, now, 0);
 }
 
-static void date_time(struct tm *tm, int hour)
+static void date_yesterday(struct tm *tm, struct tm *now, int *num)
+{
+	update_tm(tm, now, 24*60*60);
+}
+
+static void date_time(struct tm *tm, struct tm *now, int hour)
 {
 	if (tm->tm_hour < hour)
-		date_yesterday(tm, NULL);
+		date_yesterday(tm, now, NULL);
 	tm->tm_hour = hour;
 	tm->tm_min = 0;
 	tm->tm_sec = 0;
 }
 
-static void date_midnight(struct tm *tm, int *num)
+static void date_midnight(struct tm *tm, struct tm *now, int *num)
 {
-	date_time(tm, 0);
+	date_time(tm, now, 0);
 }
 
-static void date_noon(struct tm *tm, int *num)
+static void date_noon(struct tm *tm, struct tm *now, int *num)
 {
-	date_time(tm, 12);
+	date_time(tm, now, 12);
 }
 
-static void date_tea(struct tm *tm, int *num)
+static void date_tea(struct tm *tm, struct tm *now, int *num)
 {
-	date_time(tm, 17);
+	date_time(tm, now, 17);
 }
 
-static void date_pm(struct tm *tm, int *num)
+static void date_pm(struct tm *tm, struct tm *now, int *num)
 {
 	int hour, n = *num;
 	*num = 0;
@@ -688,7 +902,7 @@ static void date_pm(struct tm *tm, int *num)
 	tm->tm_hour = (hour % 12) + 12;
 }
 
-static void date_am(struct tm *tm, int *num)
+static void date_am(struct tm *tm, struct tm *now, int *num)
 {
 	int hour, n = *num;
 	*num = 0;
@@ -702,7 +916,7 @@ static void date_am(struct tm *tm, int *num)
 	tm->tm_hour = (hour % 12);
 }
 
-static void date_never(struct tm *tm, int *num)
+static void date_never(struct tm *tm, struct tm *now, int *num)
 {
 	time_t n = 0;
 	localtime_r(&n, tm);
@@ -710,7 +924,7 @@ static void date_never(struct tm *tm, int *num)
 
 static const struct special {
 	const char *name;
-	void (*fn)(struct tm *, int *);
+	void (*fn)(struct tm *, struct tm *, int *);
 } special[] = {
 	{ "yesterday", date_yesterday },
 	{ "noon", date_noon },
@@ -719,6 +933,7 @@ static const struct special {
 	{ "PM", date_pm },
 	{ "AM", date_am },
 	{ "never", date_never },
+	{ "now", date_now },
 	{ NULL }
 };
 
@@ -739,20 +954,21 @@ static const struct typelen {
 	{ NULL }
 };
 
-static const char *approxidate_alpha(const char *date, struct tm *tm, int *num)
+static const char *approxidate_alpha(const char *date, struct tm *tm, struct tm *now, int *num, int *touched)
 {
 	const struct typelen *tl;
 	const struct special *s;
 	const char *end = date;
 	int i;
 
-	while (isalpha(*++end));
+	while (isalpha(*++end))
 		;
 
 	for (i = 0; i < 12; i++) {
 		int match = match_string(date, month_names[i]);
 		if (match >= 3) {
 			tm->tm_mon = i;
+			*touched = 1;
 			return end;
 		}
 	}
@@ -760,7 +976,8 @@ static const char *approxidate_alpha(const char *date, struct tm *tm, int *num)
 	for (s = special; s->name; s++) {
 		int len = strlen(s->name);
 		if (match_string(date, s->name) == len) {
-			s->fn(tm, num);
+			s->fn(tm, now, num);
+			*touched = 1;
 			return end;
 		}
 	}
@@ -770,11 +987,14 @@ static const char *approxidate_alpha(const char *date, struct tm *tm, int *num)
 			int len = strlen(number_name[i]);
 			if (match_string(date, number_name[i]) == len) {
 				*num = i;
+				*touched = 1;
 				return end;
 			}
 		}
-		if (match_string(date, "last") == 4)
+		if (match_string(date, "last") == 4) {
 			*num = 1;
+			*touched = 1;
+		}
 		return end;
 	}
 
@@ -782,8 +1002,9 @@ static const char *approxidate_alpha(const char *date, struct tm *tm, int *num)
 	while (tl->type) {
 		int len = strlen(tl->type);
 		if (match_string(date, tl->type) >= len-1) {
-			update_tm(tm, tl->length * *num);
+			update_tm(tm, now, tl->length * *num);
 			*num = 0;
+			*touched = 1;
 			return end;
 		}
 		tl++;
@@ -800,32 +1021,39 @@ static const char *approxidate_alpha(const char *date, struct tm *tm, int *num)
 				n++;
 			diff += 7*n;
 
-			update_tm(tm, diff * 24 * 60 * 60);
+			update_tm(tm, now, diff * 24 * 60 * 60);
+			*touched = 1;
 			return end;
 		}
 	}
 
 	if (match_string(date, "months") >= 5) {
-		int n = tm->tm_mon - *num;
+		int n;
+		update_tm(tm, now, 0); /* fill in date fields if needed */
+		n = tm->tm_mon - *num;
 		*num = 0;
 		while (n < 0) {
 			n += 12;
 			tm->tm_year--;
 		}
 		tm->tm_mon = n;
+		*touched = 1;
 		return end;
 	}
 
 	if (match_string(date, "years") >= 4) {
+		update_tm(tm, now, 0); /* fill in date fields if needed */
 		tm->tm_year -= *num;
 		*num = 0;
+		*touched = 1;
 		return end;
 	}
 
 	return end;
 }
 
-static const char *approxidate_digit(const char *date, struct tm *tm, int *num)
+static const char *approxidate_digit(const char *date, struct tm *tm, int *num,
+				     time_t now)
 {
 	char *end;
 	unsigned long number = strtoul(date, &end, 10);
@@ -836,7 +1064,8 @@ static const char *approxidate_digit(const char *date, struct tm *tm, int *num)
 	case '/':
 	case '-':
 		if (isdigit(end[1])) {
-			int match = match_multi_number(number, *end, date, end, tm);
+			int match = match_multi_number(number, *end, date, end,
+						       tm, now);
 			if (match)
 				return date + match;
 		}
@@ -848,34 +1077,112 @@ static const char *approxidate_digit(const char *date, struct tm *tm, int *num)
 	return end;
 }
 
-unsigned long approxidate(const char *date)
+/*
+ * Do we have a pending number at the end, or when
+ * we see a new one? Let's assume it's a month day,
+ * as in "Dec 6, 1992"
+ */
+static void pending_number(struct tm *tm, int *num)
+{
+	int number = *num;
+
+	if (number) {
+		*num = 0;
+		if (tm->tm_mday < 0 && number < 32)
+			tm->tm_mday = number;
+		else if (tm->tm_mon < 0 && number < 13)
+			tm->tm_mon = number-1;
+		else if (tm->tm_year < 0) {
+			if (number > 1969 && number < 2100)
+				tm->tm_year = number - 1900;
+			else if (number > 69 && number < 100)
+				tm->tm_year = number;
+			else if (number < 38)
+				tm->tm_year = 100 + number;
+			/* We screw up for number = 00 ? */
+		}
+	}
+}
+
+static unsigned long approxidate_str(const char *date,
+				     const struct timeval *tv,
+				     int *error_ret)
 {
 	int number = 0;
+	int touched = 0;
 	struct tm tm, now;
-	struct timeval tv;
-	char buffer[50];
+	time_t time_sec;
 
-	if (parse_date(date, buffer, sizeof(buffer)) > 0)
-		return strtoul(buffer, NULL, 10);
-
-	gettimeofday(&tv, NULL);
-	localtime_r(&tv.tv_sec, &tm);
+	time_sec = tv->tv_sec;
+	localtime_r(&time_sec, &tm);
 	now = tm;
+
+	tm.tm_year = -1;
+	tm.tm_mon = -1;
+	tm.tm_mday = -1;
+
 	for (;;) {
 		unsigned char c = *date;
 		if (!c)
 			break;
 		date++;
 		if (isdigit(c)) {
-			date = approxidate_digit(date-1, &tm, &number);
+			pending_number(&tm, &number);
+			date = approxidate_digit(date-1, &tm, &number, time_sec);
+			touched = 1;
 			continue;
 		}
 		if (isalpha(c))
-			date = approxidate_alpha(date-1, &tm, &number);
+			date = approxidate_alpha(date-1, &tm, &now, &number, &touched);
 	}
-	if (number > 0 && number < 32)
-		tm.tm_mday = number;
-	if (tm.tm_mon > now.tm_mon && tm.tm_year == now.tm_year)
-		tm.tm_year--;
-	return mktime(&tm);
+	pending_number(&tm, &number);
+	if (!touched)
+		*error_ret = 1;
+	return update_tm(&tm, &now, 0);
+}
+
+unsigned long approxidate_relative(const char *date, const struct timeval *tv)
+{
+	unsigned long timestamp;
+	int offset;
+	int errors = 0;
+
+	if (!parse_date_basic(date, &timestamp, &offset))
+		return timestamp;
+	return approxidate_str(date, tv, &errors);
+}
+
+unsigned long approxidate_careful(const char *date, int *error_ret)
+{
+	struct timeval tv;
+	unsigned long timestamp;
+	int offset;
+	int dummy = 0;
+	if (!error_ret)
+		error_ret = &dummy;
+
+	if (!parse_date_basic(date, &timestamp, &offset)) {
+		*error_ret = 0;
+		return timestamp;
+	}
+
+	gettimeofday(&tv, NULL);
+	return approxidate_str(date, &tv, error_ret);
+}
+
+int date_overflows(unsigned long t)
+{
+	time_t sys;
+
+	/* If we overflowed our unsigned long, that's bad... */
+	if (t == ULONG_MAX)
+		return 1;
+
+	/*
+	 * ...but we also are going to feed the result to system
+	 * functions that expect time_t, which is often "signed long".
+	 * Make sure that we fit into time_t, as well.
+	 */
+	sys = t;
+	return t != sys || (t < 1) != (sys < 1);
 }

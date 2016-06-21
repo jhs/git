@@ -3,20 +3,20 @@
 test_description='git pack-object --include-tag'
 . ./test-lib.sh
 
-TRASH=`pwd`
+TRASH=$(pwd)
 
 test_expect_success setup '
 	echo c >d &&
 	git update-index --add d &&
-	tree=`git write-tree` &&
-	commit=`git commit-tree $tree </dev/null` &&
+	tree=$(git write-tree) &&
+	commit=$(git commit-tree $tree </dev/null) &&
 	echo "object $commit" >sig &&
 	echo "type commit" >>sig &&
 	echo "tag mytag" >>sig &&
 	echo "tagger $(git var GIT_COMMITTER_IDENT)" >>sig &&
 	echo >>sig &&
 	echo "our test tag" >>sig &&
-	tag=`git mktag <sig` &&
+	tag=$(git mktag <sig) &&
 	rm d sig &&
 	git update-ref refs/tags/mytag $tag && {
 		echo $tree &&
@@ -45,9 +45,7 @@ test_expect_success 'unpack objects' '
 test_expect_success 'check unpacked result (have commit, no tag)' '
 	git rev-list --objects $commit >list.expect &&
 	(
-		GIT_DIR=clone.git &&
-		export GIT_DIR &&
-		test_must_fail git cat-file -e $tag &&
+		test_must_fail env GIT_DIR=clone.git git cat-file -e $tag &&
 		git rev-list --objects $commit
 	) >list.actual &&
 	test_cmp list.expect list.actual

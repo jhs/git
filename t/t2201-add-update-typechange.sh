@@ -4,14 +4,18 @@ test_description='more git add -u'
 
 . ./test-lib.sh
 
-_z40=0000000000000000000000000000000000000000
-
 test_expect_success setup '
 	>xyzzy &&
 	_empty=$(git hash-object --stdin <xyzzy) &&
 	>yomin &&
 	>caskly &&
-	ln -s frotz nitfol &&
+	if test_have_prereq SYMLINKS; then
+		ln -s frotz nitfol &&
+		T_letter=T
+	else
+		printf %s frotz > nitfol &&
+		T_letter=M
+	fi &&
 	mkdir rezrov &&
 	>rezrov/bozbar &&
 	git add caskly xyzzy yomin nitfol rezrov/bozbar &&
@@ -29,7 +33,11 @@ test_expect_success modify '
 	>nitfol &&
 	# rezrov/bozbar disappears
 	rm -fr rezrov &&
-	ln -s xyzzy rezrov &&
+	if test_have_prereq SYMLINKS; then
+		ln -s xyzzy rezrov
+	else
+		printf %s xyzzy > rezrov
+	fi &&
 	# xyzzy disappears (not a submodule)
 	mkdir xyzzy &&
 	echo gnusto >xyzzy/bozbar &&
@@ -71,7 +79,7 @@ test_expect_success modify '
 				s/blob/000000/
 			}
 			/	nitfol/{
-				s/	nitfol/ $_z40 T&/
+				s/	nitfol/ $_z40 $T_letter&/
 				s/blob/100644/
 			}
 			/	rezrov.bozbar/{

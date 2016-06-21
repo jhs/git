@@ -3,19 +3,20 @@ gittutorial(7)
 
 NAME
 ----
-gittutorial - A tutorial introduction to git (for version 1.5.1 or newer)
+gittutorial - A tutorial introduction to Git
 
 SYNOPSIS
 --------
+[verse]
 git *
 
 DESCRIPTION
 -----------
 
-This tutorial explains how to import a new project into git, make
+This tutorial explains how to import a new project into Git, make
 changes to it, and share changes with other developers.
 
-If you are instead primarily interested in using git to fetch a project,
+If you are instead primarily interested in using Git to fetch a project,
 for example, to test the latest version, you may prefer to start with
 the first two chapters of link:user-manual.html[The Git User's Manual].
 
@@ -35,7 +36,7 @@ $ git help log
 With the latter, you can use the manual viewer of your choice; see
 linkgit:git-help[1] for more information.
 
-It is a good idea to introduce yourself to git with your name and
+It is a good idea to introduce yourself to Git with your name and
 public email address before doing any operation.  The easiest
 way to do so is:
 
@@ -49,7 +50,7 @@ Importing a new project
 -----------------------
 
 Assume you have a tarball project.tar.gz with your initial work.  You
-can place it under git revision control as follows.
+can place it under Git revision control as follows.
 
 ------------------------------------------------
 $ tar xzf project.tar.gz
@@ -66,23 +67,23 @@ Initialized empty Git repository in .git/
 You've now initialized the working directory--you may notice a new
 directory created, named ".git".
 
-Next, tell git to take a snapshot of the contents of all files under the
-current directory (note the '.'), with 'git-add':
+Next, tell Git to take a snapshot of the contents of all files under the
+current directory (note the '.'), with 'git add':
 
 ------------------------------------------------
 $ git add .
 ------------------------------------------------
 
-This snapshot is now stored in a temporary staging area which git calls
+This snapshot is now stored in a temporary staging area which Git calls
 the "index".  You can permanently store the contents of the index in the
-repository with 'git-commit':
+repository with 'git commit':
 
 ------------------------------------------------
 $ git commit
 ------------------------------------------------
 
 This will prompt you for a commit message.  You've now stored the first
-version of your project in git.
+version of your project in Git.
 
 Making changes
 --------------
@@ -94,26 +95,27 @@ $ git add file1 file2 file3
 ------------------------------------------------
 
 You are now ready to commit.  You can see what is about to be committed
-using 'git-diff' with the --cached option:
+using 'git diff' with the --cached option:
 
 ------------------------------------------------
 $ git diff --cached
 ------------------------------------------------
 
-(Without --cached, 'git-diff' will show you any changes that
+(Without --cached, 'git diff' will show you any changes that
 you've made but not yet added to the index.)  You can also get a brief
-summary of the situation with 'git-status':
+summary of the situation with 'git status':
 
 ------------------------------------------------
 $ git status
-# On branch master
-# Changes to be committed:
-#   (use "git reset HEAD <file>..." to unstage)
-#
-#	modified:   file1
-#	modified:   file2
-#	modified:   file3
-#
+On branch master
+Changes to be committed:
+Your branch is up-to-date with 'origin/master'.
+  (use "git reset HEAD <file>..." to unstage)
+
+	modified:   file1
+	modified:   file2
+	modified:   file3
+
 ------------------------------------------------
 
 If you need to make any further adjustments, do so now, and then add any
@@ -126,7 +128,7 @@ $ git commit
 This will again prompt you for a message describing the change, and then
 record a new version of the project.
 
-Alternatively, instead of running 'git-add' beforehand, you can use
+Alternatively, instead of running 'git add' beforehand, you can use
 
 ------------------------------------------------
 $ git commit -a
@@ -138,16 +140,18 @@ them to the index, and commit, all in one step.
 A note on commit messages: Though not required, it's a good idea to
 begin the commit message with a single short (less than 50 character)
 line summarizing the change, followed by a blank line and then a more
-thorough description.  Tools that turn commits into email, for
-example, use the first line on the Subject: line and the rest of the
-commit in the body.
+thorough description. The text up to the first blank line in a commit
+message is treated as the commit title, and that title is used
+throughout Git.  For example, linkgit:git-format-patch[1] turns a
+commit into email, and it uses the title on the Subject line and the
+rest of the commit in the body.
 
 Git tracks content not files
 ----------------------------
 
 Many revision control systems provide an `add` command that tells the
 system to start tracking changes to a new file.  Git's `add` command
-does something simpler and more powerful: 'git-add' is used both for new
+does something simpler and more powerful: 'git add' is used both for new
 and newly modified files, and in both cases it takes a snapshot of the
 given files and stages that content in the index, ready for inclusion in
 the next commit.
@@ -177,7 +181,7 @@ $ git log --stat --summary
 Managing branches
 -----------------
 
-A single git repository can maintain multiple branches of
+A single Git repository can maintain multiple branches of
 development.  To create a new branch named "experimental", use
 
 ------------------------------------------------
@@ -273,10 +277,10 @@ $ git branch -D crazy-idea
 Branches are cheap and easy, so this is a good way to try something
 out.
 
-Using git for collaboration
+Using Git for collaboration
 ---------------------------
 
-Suppose that Alice has started a new project with a git repository in
+Suppose that Alice has started a new project with a Git repository in
 /home/alice/project, and that Bob, who has a home directory on the
 same machine, wants to contribute.
 
@@ -317,7 +321,7 @@ Note that in general, Alice would want her local changes committed before
 initiating this "pull".  If Bob's work conflicts with what Alice did since
 their histories forked, Alice will use her working tree and the index to
 resolve conflicts, and existing local changes will interfere with the
-conflict resolution process (git will still perform the fetch but will
+conflict resolution process (Git will still perform the fetch but will
 refuse to merge --- Alice will have to get rid of her local changes in
 some way and pull again when this happens).
 
@@ -332,11 +336,11 @@ alice$ git log -p HEAD..FETCH_HEAD
 ------------------------------------------------
 
 This operation is safe even if Alice has uncommitted local changes.
-The range notation HEAD..FETCH_HEAD" means "show everything that is reachable
-from the FETCH_HEAD but exclude anything that is reachable from HEAD.
+The range notation "HEAD..FETCH_HEAD" means "show everything that is reachable
+from the FETCH_HEAD but exclude anything that is reachable from HEAD".
 Alice already knows everything that leads to her current state (HEAD),
-and reviewing what Bob has in his state (FETCH_HEAD) that she has not
-seen with this command
+and reviews what Bob has in his state (FETCH_HEAD) that she has not
+seen with this command.
 
 If Alice wants to visualize what Bob did since their histories forked
 she can issue the following command:
@@ -375,17 +379,17 @@ it easier:
 alice$ git remote add bob /home/bob/myrepo
 ------------------------------------------------
 
-With this, Alice can perform the first part of the "pull" operation alone using the
-'git-fetch' command without merging them with her own branch,
-using:
+With this, Alice can perform the first part of the "pull" operation
+alone using the 'git fetch' command without merging them with her own
+branch, using:
 
 -------------------------------------
 alice$ git fetch bob
 -------------------------------------
 
 Unlike the longhand form, when Alice fetches from Bob using a
-remote repository shorthand set up with 'git-remote', what was
-fetched is stored in a remote tracking branch, in this case
+remote repository shorthand set up with 'git remote', what was
+fetched is stored in a remote-tracking branch, in this case
 `bob/master`.  So after this:
 
 -------------------------------------
@@ -402,8 +406,8 @@ could merge the changes into her master branch:
 alice$ git merge bob/master
 -------------------------------------
 
-This `merge` can also be done by 'pulling from her own remote
-tracking branch', like this:
+This `merge` can also be done by 'pulling from her own remote-tracking
+branch', like this:
 
 -------------------------------------
 alice$ git pull . remotes/bob/master
@@ -419,7 +423,7 @@ bob$ git pull
 -------------------------------------
 
 Note that he doesn't need to give the path to Alice's repository;
-when Bob cloned Alice's repository, git stored the location of her
+when Bob cloned Alice's repository, Git stored the location of her
 repository in the repository configuration, and that location is
 used for pulls:
 
@@ -428,7 +432,7 @@ bob$ git config --get remote.origin.url
 /home/alice/project
 -------------------------------------
 
-(The complete configuration created by 'git-clone' is visible using
+(The complete configuration created by 'git clone' is visible using
 `git config -l`, and the linkgit:git-config[1] man page
 explains the meaning of each option.)
 
@@ -447,7 +451,7 @@ perform clones and pulls using the ssh protocol:
 bob$ git clone alice.org:/home/alice/project myrepo
 -------------------------------------
 
-Alternatively, git has a native protocol, or can use rsync or http;
+Alternatively, Git has a native protocol, or can use http;
 see linkgit:git-pull[1] for details.
 
 Git can also be used in a CVS-like mode, with a central repository
@@ -458,7 +462,7 @@ Exploring history
 -----------------
 
 Git history is represented as a series of interrelated commits.  We
-have already seen that the 'git-log' command can list those commits.
+have already seen that the 'git log' command can list those commits.
 Note that first line of each git log entry also gives a name for the
 commit:
 
@@ -471,7 +475,7 @@ Date:   Tue May 16 17:18:22 2006 -0700
     merge-base: Clarify the comments on post processing.
 -------------------------------------
 
-We can give this name to 'git-show' to see the details about this
+We can give this name to 'git show' to see the details about this
 commit.
 
 -------------------------------------
@@ -515,7 +519,7 @@ share this name with other people (for example, to identify a release
 version), you should create a "tag" object, and perhaps sign it; see
 linkgit:git-tag[1] for details.
 
-Any git command that needs to know a commit can take any of these
+Any Git command that needs to know a commit can take any of these
 names.  For example:
 
 -------------------------------------
@@ -529,13 +533,13 @@ $ git reset --hard HEAD^ # reset your current branch and working
 Be careful with that last command: in addition to losing any changes
 in the working directory, it will also remove all later commits from
 this branch.  If this branch is the only branch containing those
-commits, they will be lost.  Also, don't use 'git-reset' on a
+commits, they will be lost.  Also, don't use 'git reset' on a
 publicly-visible branch that other developers pull from, as it will
 force needless merges on other developers to clean up the history.
-If you need to undo changes that you have pushed, use 'git-revert'
+If you need to undo changes that you have pushed, use 'git revert'
 instead.
 
-The 'git-grep' command can search for strings in any version of your
+The 'git grep' command can search for strings in any version of your
 project, so
 
 -------------------------------------
@@ -544,17 +548,17 @@ $ git grep "hello" v2.5
 
 searches for all occurrences of "hello" in v2.5.
 
-If you leave out the commit name, 'git-grep' will search any of the
+If you leave out the commit name, 'git grep' will search any of the
 files it manages in your current directory.  So
 
 -------------------------------------
 $ git grep "hello"
 -------------------------------------
 
-is a quick way to search just the files that are tracked by git.
+is a quick way to search just the files that are tracked by Git.
 
-Many git commands also take sets of commits, which can be specified
-in a number of ways.  Here are some examples with 'git-log':
+Many Git commands also take sets of commits, which can be specified
+in a number of ways.  Here are some examples with 'git log':
 
 -------------------------------------
 $ git log v2.5..v2.6            # commits between v2.5 and v2.6
@@ -564,32 +568,32 @@ $ git log v2.5.. Makefile       # commits since v2.5 which modify
 				# Makefile
 -------------------------------------
 
-You can also give 'git-log' a "range" of commits where the first is not
+You can also give 'git log' a "range" of commits where the first is not
 necessarily an ancestor of the second; for example, if the tips of
-the branches "stable-release" and "master" diverged from a common
+the branches "stable" and "master" diverged from a common
 commit some time ago, then
 
 -------------------------------------
-$ git log stable..experimental
+$ git log stable..master
 -------------------------------------
 
-will list commits made in the experimental branch but not in the
+will list commits made in the master branch but not in the
 stable branch, while
 
 -------------------------------------
-$ git log experimental..stable
+$ git log master..stable
 -------------------------------------
 
 will show the list of commits made on the stable branch but not
-the experimental branch.
+the master branch.
 
-The 'git-log' command has a weakness: it must present commits in a
+The 'git log' command has a weakness: it must present commits in a
 list.  When the history has lines of development that diverged and
-then merged back together, the order in which 'git-log' presents
+then merged back together, the order in which 'git log' presents
 those commits is meaningless.
 
 Most projects with multiple contributors (such as the Linux kernel,
-or git itself) have frequent merges, and 'gitk' does a better job of
+or Git itself) have frequent merges, and 'gitk' does a better job of
 visualizing their history.  For example,
 
 -------------------------------------
@@ -609,7 +613,7 @@ of the file:
 $ git diff v2.5:Makefile HEAD:Makefile.in
 -------------------------------------
 
-You can also use 'git-show' to see any such file:
+You can also use 'git show' to see any such file:
 
 -------------------------------------
 $ git show v2.5:Makefile
@@ -620,7 +624,7 @@ Next Steps
 
 This tutorial should be enough to perform basic distributed revision
 control for your projects.  However, to fully understand the depth
-and power of git you need to understand two simple ideas on which it
+and power of Git you need to understand two simple ideas on which it
 is based:
 
   * The object database is the rather elegant system used to
@@ -633,7 +637,7 @@ is based:
 
 Part two of this tutorial explains the object
 database, the index file, and a few other odds and ends that you'll
-need to make the most of git. You can find it at linkgit:gittutorial-2[7].
+need to make the most of Git. You can find it at linkgit:gittutorial-2[7].
 
 If you don't want to continue with that right away, a few other
 digressions that may be interesting at this point are:
@@ -650,7 +654,10 @@ digressions that may be interesting at this point are:
     smart enough to perform a close-to-optimal search even in the
     case of complex non-linear history with lots of merged branches.
 
-  * link:everyday.html[Everyday GIT with 20 Commands Or So]
+  * linkgit:gitworkflows[7]: Gives an overview of recommended
+    workflows.
+
+  * linkgit:giteveryday[7]: Everyday Git with 20 Commands Or So.
 
   * linkgit:gitcvs-migration[7]: Git for CVS users.
 
@@ -661,7 +668,8 @@ linkgit:gitcvs-migration[7],
 linkgit:gitcore-tutorial[7],
 linkgit:gitglossary[7],
 linkgit:git-help[1],
-link:everyday.html[Everyday git],
+linkgit:gitworkflows[7],
+linkgit:giteveryday[7],
 link:user-manual.html[The Git User's Manual]
 
 GIT

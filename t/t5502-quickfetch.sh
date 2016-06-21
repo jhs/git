@@ -57,7 +57,7 @@ test_expect_success 'copy commit and tree but not blob by hand' '
 		cd cloned &&
 		git count-objects | sed -e "s/ *objects,.*//"
 	) ) &&
-	test $cnt -eq 6
+	test $cnt -eq 6 &&
 
 	blob=$(git rev-parse HEAD:file | sed -e "s|..|&/|") &&
 	test -f "cloned/.git/objects/$blob" &&
@@ -116,6 +116,26 @@ test_expect_success 'quickfetch should not copy from alternate' '
 	test $obj_cnt -eq 0 &&
 	test $pck_cnt -eq 0 &&
 	test z$origin_master = z$(git rev-parse master)
+
+'
+
+test_expect_success 'quickfetch should handle ~1000 refs (on Windows)' '
+
+	git gc &&
+	head=$(git rev-parse HEAD) &&
+	branchprefix="$head refs/heads/branch" &&
+	for i in 0 1 2 3 4 5 6 7 8 9; do
+		for j in 0 1 2 3 4 5 6 7 8 9; do
+			for k in 0 1 2 3 4 5 6 7 8 9; do
+				echo "$branchprefix$i$j$k" >> .git/packed-refs
+			done
+		done
+	done &&
+	(
+		cd cloned &&
+		git fetch &&
+		git fetch
+	)
 
 '
 

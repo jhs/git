@@ -18,13 +18,18 @@ field local_path       {} ; # Where this repository is locally
 field origin_url       {} ; # Where we are cloning from
 field origin_name  origin ; # What we shall call 'origin'
 field clone_type hardlink ; # Type of clone to construct
+field recursive      true ; # Recursive cloning flag
 field readtree_err        ; # Error output from read-tree (if any)
 field sorted_recent       ; # recent repositories (sorted)
 
 constructor pick {} {
-	global M1T M1B
+	global M1T M1B use_ttk NS
 
-	make_toplevel top w
+	if {[set maxrecent [get_config gui.maxrecentrepo]] eq {}} {
+		set maxrecent 10
+	}
+
+	make_dialog top w
 	wm title $top [mc "Git Gui"]
 
 	if {$top eq {.}} {
@@ -71,11 +76,11 @@ constructor pick {} {
 
 	set w_body $w.body
 	set opts $w_body.options
-	frame $w_body
+	${NS}::frame $w_body
 	text $opts \
 		-cursor $::cursor_ptr \
 		-relief flat \
-		-background [$w_body cget -background] \
+		-background [get_bg_color $w_body] \
 		-wrap none \
 		-spacing1 5 \
 		-width 50 \
@@ -100,12 +105,17 @@ constructor pick {} {
 	$opts insert end [mc "Clone Existing Repository"] link_clone
 	$opts insert end "\n"
 	if {$m_repo ne {}} {
+		if {[tk windowingsystem] eq "win32"} {
+			set key L
+		} else {
+			set key C
+		}
 		$m_repo add command \
 			-command [cb _next clone] \
-			-accelerator $M1T-C \
+			-accelerator $M1T-$key \
 			-label [mc "Clone..."]
-		bind $top <$M1B-c> [cb _next clone]
-		bind $top <$M1B-C> [cb _next clone]
+		bind $top <$M1B-[string tolower $key]> [cb _next clone]
+		bind $top <$M1B-[string toupper $key]> [cb _next clone]
 	}
 
 	$opts tag conf link_open -foreground blue -underline 1
@@ -132,18 +142,18 @@ constructor pick {} {
 				-label [mc "Recent Repositories"]
 		}
 
-		label $w_body.space
-		label $w_body.recentlabel \
+		${NS}::label $w_body.space
+		${NS}::label $w_body.recentlabel \
 			-anchor w \
 			-text [mc "Open Recent Repository:"]
 		set w_recentlist $w_body.recentlist
 		text $w_recentlist \
 			-cursor $::cursor_ptr \
 			-relief flat \
-			-background [$w_body.recentlabel cget -background] \
+			-background [get_bg_color $w_body.recentlabel] \
 			-wrap none \
 			-width 50 \
-			-height 10
+			-height $maxrecent
 		$w_recentlist tag conf link \
 			-foreground blue \
 			-underline 1
@@ -176,10 +186,10 @@ constructor pick {} {
 	}
 	pack $w_body -fill x -padx 10 -pady 10
 
-	frame $w.buttons
+	${NS}::frame $w.buttons
 	set w_next $w.buttons.next
 	set w_quit $w.buttons.quit
-	button $w_quit \
+	${NS}::button $w_quit \
 		-text [mc "Quit"] \
 		-command exit
 	pack $w_quit -side right -padx 5
@@ -203,17 +213,10 @@ constructor pick {} {
 	wm deiconify $top
 	tkwait variable @done
 
+	grab release $top
 	if {$top eq {.}} {
 		eval destroy [winfo children $top]
 	}
-}
-
-proc _home {} {
-	if {[catch {set h $::env(HOME)}]
-		|| ![file isdirectory $h]} {
-		set h .
-	}
-	return $h
 }
 
 method _center {} {
@@ -235,6 +238,8 @@ proc _get_recentrepos {} {
 	foreach p [get_config gui.recentrepo] {
 		if {[_is_git [file join $p .git]]} {
 			lappend recent $p
+		} else {
+			_unset_recentrepo $p
 		}
 	}
 	return [lsort $recent]
@@ -243,6 +248,7 @@ proc _get_recentrepos {} {
 proc _unset_recentrepo {p} {
 	regsub -all -- {([()\[\]{}\.^$+*?\\])} $p {\\\1} p
 	git config --global --unset gui.recentrepo "^$p\$"
+	load_config 1
 }
 
 proc _append_recentrepos {path} {
@@ -261,8 +267,13 @@ proc _append_recentrepos {path} {
 
 	lappend recent $path
 	git config --global --add gui.recentrepo $path
+	load_config 1
 
-	while {[llength $recent] > 10} {
+	if {[set maxrecent [get_config gui.maxrecentrepo]] eq {}} {
+		set maxrecent 10
+	}
+
+	while {[llength $recent] > $maxrecent} {
 		_unset_recentrepo [lindex $recent 0]
 		set recent [lrange $recent 1 end]
 	}
@@ -280,10 +291,13 @@ method _open_recent_path {p} {
 }
 
 method _next {action} {
+	global NS
 	destroy $w_body
 	if {![winfo exists $w_next]} {
-		button $w_next -default active
-		pack $w_next -side right -padx 5 -before $w_quit
+		${NS}::button $w_next -default active
+		set pos -before
+		if {[tk windowingsystem] eq "win32"} { set pos -after }
+		pack $w_next -side right -padx 5 $pos $w_quit
 	}
 	_do_$action $this
 }
@@ -324,16 +338,31 @@ method _git_init {} {
 	return 1
 }
 
-proc _is_git {path} {
+proc _is_git {path {outdir_var ""}} {
+	if {$outdir_var ne ""} {
+		upvar 1 $outdir_var outdir
+	}
+	if {[file isfile $path]} {
+		set fp [open $path r]
+		gets $fp line
+		close $fp
+		if {[regexp "^gitdir: (.+)$" $line line link_target]} {
+			set path [file join [file dirname $path] $link_target]
+			set path [file normalize $path]
+		}
+	}
+
 	if {[file exists [file join $path HEAD]]
 	 && [file exists [file join $path objects]]
 	 && [file exists [file join $path config]]} {
+		set outdir $path
 		return 1
 	}
 	if {[is_Cygwin]} {
 		if {[file exists [file join $path HEAD]]
 		 && [file exists [file join $path objects.lnk]]
 		 && [file exists [file join $path config.lnk]]} {
+			set outdir $path
 			return 1
 		}
 	}
@@ -371,32 +400,33 @@ proc _objdir {path} {
 ## Create New Repository
 
 method _do_new {} {
+	global use_ttk NS
 	$w_next conf \
 		-state disabled \
 		-command [cb _do_new2] \
 		-text [mc "Create"]
 
-	frame $w_body
-	label $w_body.h \
-		-font font_uibold \
+	${NS}::frame $w_body
+	${NS}::label $w_body.h \
+		-font font_uibold -anchor center \
 		-text [mc "Create New Repository"]
 	pack $w_body.h -side top -fill x -pady 10
 	pack $w_body -fill x -padx 10
 
-	frame $w_body.where
-	label $w_body.where.l -text [mc "Directory:"]
-	entry $w_body.where.t \
+	${NS}::frame $w_body.where
+	${NS}::label $w_body.where.l -text [mc "Directory:"]
+	${NS}::entry $w_body.where.t \
 		-textvariable @local_path \
-		-borderwidth 1 \
-		-relief sunken \
 		-width 50
-	button $w_body.where.b \
+	${NS}::button $w_body.where.b \
 		-text [mc "Browse"] \
 		-command [cb _new_local_path]
 	set w_localpath $w_body.where.t
 
 	grid $w_body.where.l $w_body.where.t $w_body.where.b -sticky ew
 	pack $w_body.where -fill x
+
+	grid columnconfigure $w_body.where 1 -weight 1
 
 	trace add variable @local_path write [cb _write_local_path]
 	bind $w_body.h <Destroy> [list trace remove variable @local_path write [cb _write_local_path]]
@@ -408,7 +438,7 @@ method _new_local_path {} {
 	if {$local_path ne {}} {
 		set p [file dirname $local_path]
 	} else {
-		set p [_home]
+		set p [pwd]
 	}
 
 	set p [tk_chooseDirectory \
@@ -454,69 +484,68 @@ proc _new_ok {p} {
 ## Clone Existing Repository
 
 method _do_clone {} {
+	global use_ttk NS
 	$w_next conf \
 		-state disabled \
 		-command [cb _do_clone2] \
 		-text [mc "Clone"]
 
-	frame $w_body
-	label $w_body.h \
-		-font font_uibold \
+	${NS}::frame $w_body
+	${NS}::label $w_body.h \
+		-font font_uibold -anchor center \
 		-text [mc "Clone Existing Repository"]
 	pack $w_body.h -side top -fill x -pady 10
 	pack $w_body -fill x -padx 10
 
 	set args $w_body.args
-	frame $w_body.args
+	${NS}::frame $w_body.args
 	pack $args -fill both
 
-	label $args.origin_l -text [mc "Source Location:"]
-	entry $args.origin_t \
+	${NS}::label $args.origin_l -text [mc "Source Location:"]
+	${NS}::entry $args.origin_t \
 		-textvariable @origin_url \
-		-borderwidth 1 \
-		-relief sunken \
 		-width 50
-	button $args.origin_b \
+	${NS}::button $args.origin_b \
 		-text [mc "Browse"] \
 		-command [cb _open_origin]
 	grid $args.origin_l $args.origin_t $args.origin_b -sticky ew
 
-	label $args.where_l -text [mc "Target Directory:"]
-	entry $args.where_t \
+	${NS}::label $args.where_l -text [mc "Target Directory:"]
+	${NS}::entry $args.where_t \
 		-textvariable @local_path \
-		-borderwidth 1 \
-		-relief sunken \
 		-width 50
-	button $args.where_b \
+	${NS}::button $args.where_b \
 		-text [mc "Browse"] \
 		-command [cb _new_local_path]
 	grid $args.where_l $args.where_t $args.where_b -sticky ew
 	set w_localpath $args.where_t
 
-	label $args.type_l -text [mc "Clone Type:"]
-	frame $args.type_f
+	${NS}::label $args.type_l -text [mc "Clone Type:"]
+	${NS}::frame $args.type_f
 	set w_types [list]
-	lappend w_types [radiobutton $args.type_f.hardlink \
+	lappend w_types [${NS}::radiobutton $args.type_f.hardlink \
 		-state disabled \
-		-anchor w \
 		-text [mc "Standard (Fast, Semi-Redundant, Hardlinks)"] \
 		-variable @clone_type \
 		-value hardlink]
-	lappend w_types [radiobutton $args.type_f.full \
+	lappend w_types [${NS}::radiobutton $args.type_f.full \
 		-state disabled \
-		-anchor w \
 		-text [mc "Full Copy (Slower, Redundant Backup)"] \
 		-variable @clone_type \
 		-value full]
-	lappend w_types [radiobutton $args.type_f.shared \
+	lappend w_types [${NS}::radiobutton $args.type_f.shared \
 		-state disabled \
-		-anchor w \
 		-text [mc "Shared (Fastest, Not Recommended, No Backup)"] \
 		-variable @clone_type \
 		-value shared]
 	foreach r $w_types {
 		pack $r -anchor w
 	}
+	${NS}::checkbutton $args.type_f.recursive \
+		-text [mc "Recursively clone submodules too"] \
+		-variable @recursive \
+		-onvalue true -offvalue false
+	pack $args.type_f.recursive -anchor w
 	grid $args.type_l $args.type_f -sticky new
 
 	grid columnconfigure $args 1 -weight 1
@@ -535,7 +564,7 @@ method _open_origin {} {
 	if {$origin_url ne {} && [file isdirectory $origin_url]} {
 		set p $origin_url
 	} else {
-		set p [_home]
+		set p [pwd]
 	}
 
 	set p [tk_chooseDirectory \
@@ -944,6 +973,30 @@ method _do_clone_checkout {HEAD} {
 	fileevent $fd readable [cb _readtree_wait $fd]
 }
 
+method _do_validate_submodule_cloning {ok} {
+	if {$ok} {
+		$o_cons done $ok
+		set done 1
+	} else {
+		_clone_failed $this [mc "Cannot clone submodules."]
+	}
+}
+
+method _do_clone_submodules {} {
+	if {$recursive eq {true}} {
+		destroy $w_body
+		set o_cons [console::embed \
+			$w_body \
+			[mc "Cloning submodules"]]
+		pack $w_body -fill both -expand 1 -padx 10
+		$o_cons exec \
+			[list git submodule update --init --recursive] \
+			[cb _do_validate_submodule_cloning]
+	} else {
+		set done 1
+	}
+}
+
 method _readtree_wait {fd} {
 	set buf [read $fd]
 	$o_cons update_meter $buf
@@ -964,7 +1017,34 @@ method _readtree_wait {fd} {
 		return
 	}
 
-	set done 1
+	# -- Run the post-checkout hook.
+	#
+	set fd_ph [githook_read post-checkout [string repeat 0 40] \
+		[git rev-parse HEAD] 1]
+	if {$fd_ph ne {}} {
+		global pch_error
+		set pch_error {}
+		fconfigure $fd_ph -blocking 0 -translation binary -eofchar {}
+		fileevent $fd_ph readable [cb _postcheckout_wait $fd_ph]
+	} else {
+		_do_clone_submodules $this
+	}
+}
+
+method _postcheckout_wait {fd_ph} {
+	global pch_error
+
+	append pch_error [read $fd_ph]
+	fconfigure $fd_ph -blocking 1
+	if {[eof $fd_ph]} {
+		if {[catch {close $fd_ph}]} {
+			hook_failed_popup post-checkout $pch_error 0
+		}
+		unset pch_error
+		_do_clone_submodules $this
+		return
+	}
+	fconfigure $fd_ph -blocking 0
 }
 
 ######################################################################
@@ -972,31 +1052,32 @@ method _readtree_wait {fd} {
 ## Open Existing Repository
 
 method _do_open {} {
+	global NS
 	$w_next conf \
 		-state disabled \
 		-command [cb _do_open2] \
 		-text [mc "Open"]
 
-	frame $w_body
-	label $w_body.h \
-		-font font_uibold \
+	${NS}::frame $w_body
+	${NS}::label $w_body.h \
+		-font font_uibold -anchor center \
 		-text [mc "Open Existing Repository"]
 	pack $w_body.h -side top -fill x -pady 10
 	pack $w_body -fill x -padx 10
 
-	frame $w_body.where
-	label $w_body.where.l -text [mc "Repository:"]
-	entry $w_body.where.t \
+	${NS}::frame $w_body.where
+	${NS}::label $w_body.where.l -text [mc "Repository:"]
+	${NS}::entry $w_body.where.t \
 		-textvariable @local_path \
-		-borderwidth 1 \
-		-relief sunken \
 		-width 50
-	button $w_body.where.b \
+	${NS}::button $w_body.where.b \
 		-text [mc "Browse"] \
 		-command [cb _open_local_path]
 
 	grid $w_body.where.l $w_body.where.t $w_body.where.b -sticky ew
 	pack $w_body.where -fill x
+
+	grid columnconfigure $w_body.where 1 -weight 1
 
 	trace add variable @local_path write [cb _write_local_path]
 	bind $w_body.h <Destroy> [list trace remove variable @local_path write [cb _write_local_path]]
@@ -1008,7 +1089,7 @@ method _open_local_path {} {
 	if {$local_path ne {}} {
 		set p $local_path
 	} else {
-		set p [_home]
+		set p [pwd]
 	}
 
 	set p [tk_chooseDirectory \
@@ -1027,7 +1108,7 @@ method _open_local_path {} {
 }
 
 method _do_open2 {} {
-	if {![_is_git [file join $local_path .git]]} {
+	if {![_is_git [file join $local_path .git] actualgit]} {
 		error_popup [mc "Not a Git repository: %s" [file tail $local_path]]
 		return
 	}
@@ -1040,7 +1121,7 @@ method _do_open2 {} {
 	}
 
 	_append_recentrepos [pwd]
-	set ::_gitdir .git
+	set ::_gitdir $actualgit
 	set ::_prefix {}
 	set done 1
 }
